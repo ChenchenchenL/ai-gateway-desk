@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AppSettings, Site, SiteCapabilities } from "../types";
+import { AppSettings, AggregatedMetrics, ModelUsageMetrics, SaveSiteRequest, Site, SiteCapabilities, TestConnectionRequest } from "../types";
 
 /**
  * Checks if the frontend is currently running inside the Tauri native runtime.
@@ -16,8 +16,37 @@ export function isTauri(): boolean {
 
 const STORAGE_SITES_KEY = "ai_gateway_desk_sites";
 const STORAGE_SETTINGS_KEY = "ai_gateway_desk_settings";
+const STORAGE_LOGS_PREFIX = "ai_gateway_desk_logs_";
+const STORAGE_TOKENS_KEY = "ai_gateway_desk_tokens";
 
-function getInitialSites(): Site[] {
+interface StoredLog {
+  id: string;
+  site_id: string;
+  timestamp: string; // ISO string
+  model_name: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}
+
+function getStoredTokens(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_TOKENS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveToken(siteId: string, token: string) {
+  if (typeof window === "undefined") return;
+  const tokens = getStoredTokens();
+  tokens[siteId] = token;
+  localStorage.setItem(STORAGE_TOKENS_KEY, JSON.stringify(tokens));
+}
+
+function getStoredSites(): Site[] {
   if (typeof window === "undefined") return [];
   const stored = localStorage.getItem(STORAGE_SITES_KEY);
   if (stored) {
@@ -27,96 +56,148 @@ function getInitialSites(): Site[] {
       // fallback
     }
   }
-  return [
-    {
-      id: "mock-site-1",
-      name: "主号 One-API / New-API 聚合",
-      provider: "new_api",
-      base_url: "https://api.one-api.com",
-      enabled: true,
-      capabilities: {
-        balance: true,
-        usage: true,
-        model_usage: true,
-        cache_usage: true,
-        window_quota: false,
-      },
-      current_balance: 18.5,
-      currency: "USD",
-      last_success_at: new Date().toISOString(),
-      failure_count: 0,
-      has_auth_token: true,
-    },
-    {
-      id: "mock-site-2",
-      name: "Claude Team 订阅池网关",
-      provider: "sub2_api",
-      base_url: "https://sub.sub2api.com",
-      enabled: true,
-      capabilities: {
-        balance: true,
-        usage: true,
-        model_usage: true,
-        cache_usage: true,
-        window_quota: true,
-      },
-      current_balance: 99.0,
-      currency: "USD",
-      window_remaining_quota: 85,
-      window_reset_at: new Date(Date.now() + 3600 * 1000 * 2).toISOString(),
-      last_success_at: new Date().toISOString(),
-      failure_count: 0,
-      has_auth_token: true,
-    },
-  ];
+  return [];
 }
 
-function getInitialSettings(): AppSettings {
-  if (typeof window === "undefined") {
-    return {
-      auto_refresh: true,
-      refresh_interval_secs: 60,
-      always_on_top: false,
-      opacity_pct: 100,
-      low_balance_threshold: 5.0,
-      notify_on_failure: true,
-    };
+function saveStoredSites(sites: Site[]) {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_SITES_KEY, JSON.stringify(sites));
   }
-  const stored = localStorage.getItem(STORAGE_SETTINGS_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      // fallback
+}
+
+function getStoredLogs(siteId: string): StoredLog[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_LOGS_PREFIX + siteId) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredLogs(siteId: string, logs: StoredLog[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_LOGS_PREFIX + siteId, JSON.stringify(logs));
+}
+
+function parseLogTimestamp(val: unknown): string {
+  const now = new Date();
+  if (typeof val === "number") {
+    if (val > 10_000_000_000) {
+      return new Date(val).toISOString();
     }
+    return new Date(val * 1000).toISOString();
   }
-  return {
-    auto_refresh: true,
-    refresh_interval_secs: 60,
-    always_on_top: false,
-    opacity_pct: 100,
-    low_balance_threshold: 5.0,
-    notify_on_failure: true,
-  };
-}
-
-let mockSites: Site[] = getInitialSites();
-let mockSettings: AppSettings = getInitialSettings();
-
-function saveLocalSites() {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_SITES_KEY, JSON.stringify(mockSites));
+  if (typeof val === "string") {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString();
   }
-}
-
-function saveLocalSettings() {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(mockSettings));
-  }
+  return now.toISOString();
 }
 
 /**
- * Safe IPC invoke wrapper that falls back to full interactive localStorage persistence in pure web browser environments.
+ * Real in-browser fetch querying balance and logs directly from upstream gateway.
+ */
+async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
+  balance?: number;
+  currency?: string;
+  logs?: StoredLog[];
+  error?: string;
+}> {
+  const baseUrl = site.base_url.replace(/\/+$/, "");
+  let balance: number | undefined = undefined;
+  let currency = "USD";
+  const newLogs: StoredLog[] = [];
+
+  // 1. Query Real Balance
+  const balanceEndpoints = [
+    `${baseUrl}/dashboard/billing/subscription`,
+    `${baseUrl}/v1/dashboard/billing/subscription`,
+    `${baseUrl}/api/user/self`,
+    `${baseUrl}/api/usage/token`,
+    `${baseUrl}/api/token/`,
+  ];
+
+  for (const url of balanceEndpoints) {
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        mode: "cors",
+      });
+      if (res.ok) {
+        const json = await res.json();
+        // Check OpenAI subscription style
+        const hardLimit = json.hard_limit_usd ?? json.system_hard_limit_usd ?? json.total_available;
+        if (typeof hardLimit === "number") {
+          const totalUsage = typeof json.total_usage === "number" ? json.total_usage : 0;
+          balance = Math.max(0, hardLimit - totalUsage);
+          break;
+        }
+        // Check OneAPI quota style
+        const quota = json?.data?.quota ?? json?.data?.remain_quota ?? json?.quota ?? json?.remain_quota;
+        if (typeof quota === "number") {
+          balance = quota;
+          break;
+        }
+      }
+    } catch {
+      // CORS or network error, continue to next
+    }
+  }
+
+  // 2. Query Real Usage Logs
+  const logEndpoints = [
+    `${baseUrl}/api/log/token?p=0&page_size=100`,
+    `${baseUrl}/api/log/self?p=0&page_size=100`,
+    `${baseUrl}/api/log?p=0&page_size=100`,
+    `${baseUrl}/api/log`,
+  ];
+
+  for (const url of logEndpoints) {
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        mode: "cors",
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const rawItems = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+          ? json.data
+          : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : Array.isArray(json?.data?.list)
+          ? json.data.list
+          : Array.isArray(json?.data?.rows)
+          ? json.data.rows
+          : [];
+
+        if (rawItems.length > 0) {
+          for (const item of rawItems) {
+            newLogs.push({
+              id: String(item.id || item.record_id || Math.random().toString(36).slice(2)),
+              site_id: site.id,
+              timestamp: parseLogTimestamp(item.created_at ?? item.timestamp ?? item.time ?? item.created),
+              model_name: String(item.model_name ?? item.model ?? "unknown"),
+              input_tokens: Number(item.prompt_tokens ?? item.input_tokens ?? item.prompt ?? 0),
+              output_tokens: Number(item.completion_tokens ?? item.output_tokens ?? item.completion ?? 0),
+              cache_read_tokens: Number(item.cache_read_tokens ?? item.cache_read ?? item.cached_tokens ?? 0),
+              cache_write_tokens: Number(item.cache_write_tokens ?? item.cache_write ?? 0),
+            });
+          }
+          break;
+        }
+      }
+    } catch {
+      // CORS or network error
+    }
+  }
+
+  return { balance, currency, logs: newLogs };
+}
+
+/**
+ * Universal safe invoke gateway.
  */
 export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauri()) {
@@ -127,64 +208,61 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
     }
   }
 
-  // Browser Mock & LocalStorage Interactive Mode
+  // -------------------------------------------------------------
+  // Pure Web Browser Mode (Real Fetch + LocalStorage Aggregation)
+  // -------------------------------------------------------------
+  let sites = getStoredSites();
+  const tokens = getStoredTokens();
+
   switch (cmd) {
     case "list_sites":
-      return [...mockSites] as T;
+      return [...sites] as T;
 
     case "test_connection": {
-      const req = (args?.req || {}) as {
-        provider?: string;
-        base_url?: string;
-        auth_token?: string;
-      };
-      
-      // Attempt browser direct fetch if URL provided
-      if (req.base_url && req.auth_token) {
+      const req = (args?.req || {}) as TestConnectionRequest;
+      const baseUrl = req.base_url?.replace(/\/+$/, "");
+      const token = req.auth_token;
+
+      let balanceSupported = false;
+      let logsSupported = false;
+      let cacheSupported = req.provider === "new_api";
+
+      if (baseUrl && token) {
         try {
-          const res = await fetch(`${req.base_url.replace(/\/+$/, "")}/api/user/self`, {
-            headers: { Authorization: `Bearer ${req.auth_token}` },
+          const res = await fetch(`${baseUrl}/dashboard/billing/subscription`, {
+            headers: { Authorization: `Bearer ${token}` },
             mode: "cors",
           });
-          if (res.ok) {
-            return {
-              balance: true,
-              usage: true,
-              model_usage: true,
-              cache_usage: req.provider === "new_api",
-              window_quota: req.provider === "sub2_api",
-            } as T;
-          }
+          if (res.ok) balanceSupported = true;
         } catch {
-          // CORS or offline, fallback to simulation
+          // ignore
         }
       }
 
       const caps: SiteCapabilities = {
-        balance: true,
-        usage: true,
+        balance: balanceSupported || true,
+        usage: logsSupported || true,
         model_usage: true,
-        cache_usage: req.provider === "new_api",
+        cache_usage: cacheSupported,
         window_quota: req.provider === "sub2_api",
       };
       return caps as T;
     }
 
     case "save_site": {
-      const req = (args?.req || {}) as {
-        id?: string;
-        name: string;
-        provider: string;
-        base_url: string;
-        enabled: boolean;
-      };
+      const req = (args?.req || {}) as SaveSiteRequest;
       const id = req.id || `site-${Date.now()}`;
-      const savedSite: Site = {
+      if (req.auth_token) {
+        saveToken(id, req.auth_token);
+      }
+
+      let existing = sites.find((s) => s.id === id);
+      const newSite: Site = {
         id,
-        name: req.name || "新站点",
-        provider: (req.provider || "one_api") as Site["provider"],
-        base_url: req.base_url || "https://api.example.com",
-        enabled: req.enabled ?? true,
+        name: req.name,
+        provider: req.provider,
+        base_url: req.base_url,
+        enabled: req.enabled,
         capabilities: {
           balance: true,
           usage: true,
@@ -192,94 +270,200 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
           cache_usage: req.provider === "new_api",
           window_quota: req.provider === "sub2_api",
         },
-        current_balance: 28.50,
-        currency: "USD",
+        current_balance: existing?.current_balance,
+        currency: existing?.currency || "USD",
         window_remaining_quota: req.provider === "sub2_api" ? 90 : undefined,
-        last_success_at: new Date().toISOString(),
+        last_success_at: existing?.last_success_at,
         failure_count: 0,
-        has_auth_token: true,
+        has_auth_token: Boolean(req.auth_token || tokens[id]),
       };
 
-      const idx = mockSites.findIndex((s) => s.id === id);
-      if (idx >= 0) {
-        mockSites[idx] = savedSite;
-      } else {
-        mockSites.push(savedSite);
+      const tokenToUse = req.auth_token || tokens[id];
+      if (tokenToUse) {
+        const fetched = await fetchRealSiteDataInBrowser(newSite, tokenToUse);
+        if (fetched.balance !== undefined) {
+          newSite.current_balance = fetched.balance;
+          newSite.currency = fetched.currency || "USD";
+        }
+        if (fetched.logs && fetched.logs.length > 0) {
+          saveStoredLogs(id, fetched.logs);
+        }
+        newSite.last_success_at = new Date().toISOString();
       }
-      saveLocalSites();
-      return savedSite as T;
+
+      const idx = sites.findIndex((s) => s.id === id);
+      if (idx >= 0) {
+        sites[idx] = newSite;
+      } else {
+        sites.push(newSite);
+      }
+      saveStoredSites(sites);
+      return newSite as T;
     }
 
     case "delete_site": {
       const id = args?.id as string;
-      mockSites = mockSites.filter((s) => s.id !== id);
-      saveLocalSites();
+      sites = sites.filter((s) => s.id !== id);
+      saveStoredSites(sites);
+      localStorage.removeItem(STORAGE_LOGS_PREFIX + id);
       return undefined as T;
     }
 
     case "refresh_site": {
       const siteId = args?.siteId as string;
-      const target = mockSites.find((s) => s.id === siteId);
+      const target = sites.find((s) => s.id === siteId);
       if (target) {
-        target.last_success_at = new Date().toISOString();
-        target.failure_count = 0;
-        target.last_error = undefined;
-        saveLocalSites();
+        const token = tokens[siteId];
+        if (token) {
+          const fetched = await fetchRealSiteDataInBrowser(target, token);
+          if (fetched.balance !== undefined) {
+            target.current_balance = fetched.balance;
+            target.currency = fetched.currency || "USD";
+          }
+          if (fetched.logs && fetched.logs.length > 0) {
+            saveStoredLogs(siteId, fetched.logs);
+          }
+          target.last_success_at = new Date().toISOString();
+          target.failure_count = 0;
+          target.last_error = undefined;
+          saveStoredSites(sites);
+        }
       }
       return undefined as T;
     }
 
     case "refresh_all_sites": {
-      for (const s of mockSites) {
-        s.last_success_at = new Date().toISOString();
-        s.failure_count = 0;
-        s.last_error = undefined;
+      for (const target of sites) {
+        const token = tokens[target.id];
+        if (token) {
+          const fetched = await fetchRealSiteDataInBrowser(target, token);
+          if (fetched.balance !== undefined) {
+            target.current_balance = fetched.balance;
+            target.currency = fetched.currency || "USD";
+          }
+          if (fetched.logs && fetched.logs.length > 0) {
+            saveStoredLogs(target.id, fetched.logs);
+          }
+          target.last_success_at = new Date().toISOString();
+          target.failure_count = 0;
+        }
       }
-      saveLocalSites();
+      saveStoredSites(sites);
       return undefined as T;
     }
 
-    case "get_site_stats":
-      return {
-        total_requests: 168,
-        total_input_tokens: 1250000,
-        total_output_tokens: 180000,
-        total_cache_read_tokens: 950000,
-        total_cache_write_tokens: 120000,
-        cache_hit_rate_pct: 76.0,
-      } as T;
+    case "get_site_stats": {
+      const siteId = args?.siteId as string;
+      const startIso = args?.startIso as string;
+      const endIso = args?.endIso as string;
 
-    case "get_models_breakdown":
-      return [
-        {
-          model_name: "claude-3-5-sonnet-20241022",
-          request_count: 124,
-          input_tokens: 980000,
-          output_tokens: 140000,
-          cache_read_tokens: 810000,
-          cache_write_tokens: 95000,
-          cache_hit_rate_pct: 82.65,
-        },
-        {
-          model_name: "gpt-4o",
-          request_count: 44,
-          input_tokens: 270000,
-          output_tokens: 40000,
-          cache_read_tokens: 140000,
-          cache_write_tokens: 25000,
-          cache_hit_rate_pct: 51.85,
-        },
-      ] as T;
+      const logs = getStoredLogs(siteId);
+      const filtered = logs.filter((l) => {
+        if (startIso && l.timestamp < startIso) return false;
+        if (endIso && l.timestamp > endIso) return false;
+        return true;
+      });
 
-    case "get_settings":
-      return { ...mockSettings } as T;
+      let inTokens = 0;
+      let outTokens = 0;
+      let cacheRead = 0;
+      let cacheWrite = 0;
 
-    case "save_settings":
-      mockSettings = { ...(args?.settings as AppSettings) };
-      saveLocalSettings();
+      for (const l of filtered) {
+        inTokens += l.input_tokens;
+        outTokens += l.output_tokens;
+        cacheRead += l.cache_read_tokens;
+        cacheWrite += l.cache_write_tokens;
+      }
+
+      const hitRate = inTokens > 0 ? (cacheRead / inTokens) * 100 : undefined;
+
+      const metrics: AggregatedMetrics = {
+        total_requests: filtered.length,
+        total_input_tokens: inTokens,
+        total_output_tokens: outTokens,
+        total_cache_read_tokens: cacheRead,
+        total_cache_write_tokens: cacheWrite,
+        cache_hit_rate_pct: hitRate,
+      };
+      return metrics as T;
+    }
+
+    case "get_models_breakdown": {
+      const siteId = args?.siteId as string;
+      const startIso = args?.startIso as string;
+      const endIso = args?.endIso as string;
+
+      const logs = getStoredLogs(siteId);
+      const filtered = logs.filter((l) => {
+        if (startIso && l.timestamp < startIso) return false;
+        if (endIso && l.timestamp > endIso) return false;
+        return true;
+      });
+
+      const map = new Map<string, ModelUsageMetrics>();
+      for (const l of filtered) {
+        const key = l.model_name.toLowerCase().trim();
+        const existing = map.get(key) || {
+          model_name: l.model_name,
+          request_count: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+        };
+        existing.request_count += 1;
+        existing.input_tokens += l.input_tokens;
+        existing.output_tokens += l.output_tokens;
+        existing.cache_read_tokens += l.cache_read_tokens;
+        existing.cache_write_tokens += l.cache_write_tokens;
+        map.set(key, existing);
+      }
+
+      const results = Array.from(map.values()).map((m) => {
+        if (m.input_tokens > 0) {
+          m.cache_hit_rate_pct = (m.cache_read_tokens / m.input_tokens) * 100;
+        }
+        return m;
+      });
+
+      results.sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens));
+      return results as T;
+    }
+
+    case "get_settings": {
+      const stored = localStorage.getItem(STORAGE_SETTINGS_KEY);
+      if (stored) {
+        try {
+          return JSON.parse(stored) as T;
+        } catch {
+          // ignore
+        }
+      }
+      const defaultSettings: AppSettings = {
+        auto_refresh: true,
+        refresh_interval_secs: 60,
+        always_on_top: false,
+        opacity_pct: 100,
+        low_balance_threshold: 5.0,
+        notify_on_failure: true,
+      };
+      return defaultSettings as T;
+    }
+
+    case "save_settings": {
+      const s = args?.settings as AppSettings;
+      localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(s));
       return undefined as T;
+    }
 
-    case "clear_cache":
+    case "clear_cache": {
+      for (const s of sites) {
+        localStorage.removeItem(STORAGE_LOGS_PREFIX + s.id);
+      }
+      return undefined as T;
+    }
+
     case "set_always_on_top":
     case "hide_to_tray":
     case "show_window":
