@@ -1,0 +1,125 @@
+//! Refresh application service
+//!
+//! Coordinates concurrent site querying, deduplication, and caching.
+
+use std::collections::HashSet;
+use std::sync::Arc;
+use chrono::{Duration, Utc};
+use tokio::sync::Mutex;
+use uuid::Uuid;
+
+use crate::domain::error::AppError;
+use crate::infra::adapters::create_adapter;
+use crate::infra::storage::{
+    db::Database, secure_store::SecureStore, site_repo::SiteRepository, usage_repo::UsageRepository,
+};
+use super::alert_service::AlertService;
+
+/// Service coordinating manual and background site data refresh.
+pub struct RefreshService {
+    db: Arc<Database>,
+    in_flight_refreshes: Mutex<HashSet<Uuid>>,
+}
+
+impl RefreshService {
+    /// Creates a new RefreshService instance.
+    pub fn new(db: Arc<Database>) -> Self {
+        Self {
+            db,
+            in_flight_refreshes: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Triggers immediate refresh for a single site, reusing ongoing request if already in-flight.
+    pub async fn refresh_site(&self, site_id: Uuid) -> Result<(), AppError> {
+        {
+            let mut in_flight = self.in_flight_refreshes.lock().await;
+            if in_flight.contains(&site_id) {
+                // Reuse ongoing request per spec 7
+                return Ok(());
+            }
+            in_flight.insert(site_id);
+        }
+
+        let result = self.execute_site_refresh(site_id).await;
+
+        {
+            let mut in_flight = self.in_flight_refreshes.lock().await;
+            in_flight.remove(&site_id);
+        }
+
+        result
+    }
+
+    /// Executes the actual adapter queries and database updates for a site.
+    async fn execute_site_refresh(&self, site_id: Uuid) -> Result<(), AppError> {
+        let repo = SiteRepository::new(&self.db);
+        let mut site = match repo.get_by_id(&site_id)? {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let token = match SecureStore::get_auth_token(&site_id)? {
+            Some(t) => t,
+            None => {
+                site.record_failure("Missing authentication token".to_string());
+                repo.save(&site)?;
+                return Ok(());
+            }
+        };
+
+        let adapter = create_adapter(site.id, site.provider, site.base_url.clone(), token);
+        let prev_failures = site.failure_count;
+
+        // Fetch balance
+        let balance_res = adapter.fetch_balance().await;
+        // Fetch window quota
+        let window_res = adapter.fetch_window_quota().await;
+        // Fetch usage records (past 24 hours)
+        let now = Utc::now();
+        let usage_res = adapter.fetch_usage(now - Duration::hours(24), now).await;
+
+        match balance_res {
+            Ok(bal_info) => {
+                let window_info = window_res.ok();
+                let window_rem = window_info.as_ref().and_then(|w| w.remaining_quota);
+                let window_rst = window_info.as_ref().and_then(|w| w.reset_at);
+
+                site.record_success(bal_info.balance, Some(bal_info.currency), window_rem, window_rst);
+                repo.save(&site)?;
+
+                if let Ok(records) = usage_res {
+                    if !records.is_empty() {
+                        let usage_repo = UsageRepository::new(&self.db);
+                        let _ = usage_repo.insert_batch(&records);
+                    }
+                }
+
+                if prev_failures >= 3 {
+                    AlertService::notify_recovery(&site.name)?;
+                }
+            }
+            Err(err) => {
+                site.record_failure(err.message.clone());
+                repo.save(&site)?;
+                AlertService::check_consecutive_failures(&site.name, site.failure_count)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Parallel refresh across all enabled sites.
+    pub async fn refresh_all(&self) -> Result<(), AppError> {
+        let repo = SiteRepository::new(&self.db);
+        let sites = repo.list_all()?;
+        let enabled_ids: Vec<Uuid> = sites.into_iter().filter(|s| s.enabled).map(|s| s.id).collect();
+
+        let mut tasks = Vec::new();
+        for site_id in enabled_ids {
+            tasks.push(self.refresh_site(site_id));
+        }
+
+        futures::future::join_all(tasks).await;
+        Ok(())
+    }
+}
