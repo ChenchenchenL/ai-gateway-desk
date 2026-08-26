@@ -18,6 +18,7 @@ const STORAGE_SITES_KEY = "ai_gateway_desk_sites";
 const STORAGE_SETTINGS_KEY = "ai_gateway_desk_settings";
 const STORAGE_LOGS_PREFIX = "ai_gateway_desk_logs_";
 const STORAGE_TOKENS_KEY = "ai_gateway_desk_tokens";
+const STORAGE_ADMIN_TOKENS_KEY = "ai_gateway_desk_admin_tokens";
 
 interface StoredLog {
   id: string;
@@ -44,6 +45,22 @@ function saveToken(siteId: string, token: string) {
   const tokens = getStoredTokens();
   tokens[siteId] = token;
   localStorage.setItem(STORAGE_TOKENS_KEY, JSON.stringify(tokens));
+}
+
+function getStoredAdminTokens(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_ADMIN_TOKENS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveAdminToken(siteId: string, token: string) {
+  if (typeof window === "undefined") return;
+  const tokens = getStoredAdminTokens();
+  tokens[siteId] = token;
+  localStorage.setItem(STORAGE_ADMIN_TOKENS_KEY, JSON.stringify(tokens));
 }
 
 function getStoredSites(): Site[] {
@@ -95,7 +112,7 @@ function parseLogTimestamp(val: unknown): string {
 }
 
 /**
- * Converts One-API / New-API quota points (500,000 = $1.00 USD / ¥1.00 CNY) to balance.
+ * Converts One-API / New-API quota points (500,000 = ¥1.00 / $1.00) to balance.
  */
 function convertQuotaToBalance(rawQuota: number): number {
   if (rawQuota > 500) {
@@ -111,7 +128,7 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   if (!json || typeof json !== "object") return {};
   const obj = json as Record<string, unknown>;
 
-  // 1. Array of tokens
+  // 1. Array of tokens (from /api/token/ or /api/token/?p=0&size=10)
   const list = (Array.isArray(json)
     ? json
     : Array.isArray(obj.data)
@@ -125,7 +142,7 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   if (list.length > 0) {
     for (const item of list) {
       if (item?.unlimited_quota === true) {
-        return { isUnlimited: true };
+        return { isUnlimited: true, currency: "CNY" };
       }
       const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
       if (typeof itemQuota === "number") {
@@ -141,11 +158,11 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   const target = (obj.data && typeof obj.data === "object" ? obj.data : obj) as Record<string, unknown>;
 
   if (target.unlimited_quota === true || obj.unlimited_quota === true) {
-    return { isUnlimited: true };
+    return { isUnlimited: true, currency: "CNY" };
   }
 
   const detectedCurrency = String(
-    target.currency || obj.currency || (target.symbol === "¥" || obj.symbol === "¥" ? "CNY" : "USD")
+    target.currency || obj.currency || (target.symbol === "¥" || obj.symbol === "¥" ? "CNY" : "CNY")
   );
 
   // Direct wallet numeric fields
@@ -173,7 +190,7 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   const hardLimit = (obj.hard_limit_usd ?? obj.system_hard_limit_usd ?? obj.total_available) as number | undefined;
   if (typeof hardLimit === "number" && hardLimit > 0) {
     const totalUsage = typeof obj.total_usage === "number" ? obj.total_usage : 0;
-    return { balance: convertQuotaToBalance(Math.max(0, hardLimit - totalUsage)), currency: "USD" };
+    return { balance: convertQuotaToBalance(Math.max(0, hardLimit - totalUsage)), currency: detectedCurrency };
   }
 
   return {};
@@ -280,7 +297,7 @@ async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
 /**
  * Real in-browser fetch querying balance and logs directly from upstream gateway.
  */
-async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
+async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminToken?: string): Promise<{
   balance?: number;
   currency?: string;
   logs?: StoredLog[];
@@ -291,31 +308,50 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
   let currency = site.currency || "CNY";
   const newLogs: StoredLog[] = [];
 
-  // 1. Query Real Balance including /wallet and /api/user/wallet
-  const balanceEndpoints = [
-    `${baseUrl}/api/user/wallet`,
-    `${baseUrl}/api/wallet`,
-    `${baseUrl}/api/user/dashboard`,
-    `${baseUrl}/api/dashboard`,
-    `${baseUrl}/api/user/self`,
-    `${baseUrl}/api/usage/token`,
-    `${baseUrl}/api/token/?p=0&size=10`,
-    `${baseUrl}/api/token/`,
-    `${baseUrl}/dashboard/billing/subscription`,
-    `${baseUrl}/v1/dashboard/billing/subscription`,
-    `${baseUrl}/api/user/info`,
-  ];
+  // Build endpoint candidates based on available tokens
+  const balanceEndpoints: { url: string; token: string }[] = [];
 
-  for (const url of balanceEndpoints) {
+  // 1. If admin token exists, query user wallet & user profile endpoints
+  if (adminToken) {
+    balanceEndpoints.push(
+      { url: `${baseUrl}/api/user/wallet`, token: adminToken },
+      { url: `${baseUrl}/api/user/self`, token: adminToken },
+      { url: `${baseUrl}/api/user/dashboard`, token: adminToken },
+      { url: `${baseUrl}/api/wallet`, token: adminToken },
+      { url: `${baseUrl}/api/dashboard`, token: adminToken }
+    );
+  }
+
+  // 2. Standard token / sk-... endpoints
+  balanceEndpoints.push(
+    { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
+    { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
+    { url: `${baseUrl}/api/usage/token/`, token: authToken },
+    { url: `${baseUrl}/api/usage/token`, token: authToken },
+    { url: `${baseUrl}/api/token/?p=0&size=10`, token: authToken },
+    { url: `${baseUrl}/api/token/`, token: authToken },
+    { url: `${baseUrl}/api/token/self`, token: authToken }
+  );
+
+  // If no admin token, still try user wallet with authToken as fallback
+  if (!adminToken) {
+    balanceEndpoints.push(
+      { url: `${baseUrl}/api/user/wallet`, token: authToken },
+      { url: `${baseUrl}/api/user/self`, token: authToken }
+    );
+  }
+
+  for (const item of balanceEndpoints) {
     try {
-      const res = await proxyFetch(url, token);
+      const res = await proxyFetch(item.url, item.token);
       if (res.ok) {
         const json = await res.json();
-        console.log(`[AI Gateway Desk] Balance raw response from ${url}:`, json);
+        console.log(`[AI Gateway Desk] Balance success from ${item.url}:`, json);
 
         const extracted = extractBalanceFromJson(json);
         if (extracted.isUnlimited) {
           balance = 999999;
+          currency = extracted.currency || "CNY";
           break;
         }
         if (extracted.balance !== undefined) {
@@ -324,12 +360,12 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
           break;
         }
       }
-    } catch (err) {
-      console.warn(`[AI Gateway Desk] Balance query failed on ${url}:`, err);
+    } catch {
+      // ignore individual failures
     }
   }
 
-  // 2. Query Real Usage Logs
+  // 3. Query Real Usage Logs
   const logEndpoints = [
     `${baseUrl}/api/log/token?p=0&page_size=100`,
     `${baseUrl}/api/log/self?p=0&page_size=100`,
@@ -339,7 +375,7 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
 
   for (const url of logEndpoints) {
     try {
-      const res = await proxyFetch(url, token);
+      const res = await proxyFetch(url, authToken);
       if (res.ok) {
         const json = await res.json();
         console.log(`[AI Gateway Desk] Usage logs raw response from ${url}:`, json);
@@ -397,6 +433,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
   // -------------------------------------------------------------
   let sites = getStoredSites();
   const tokens = getStoredTokens();
+  const adminTokens = getStoredAdminTokens();
 
   switch (cmd) {
     case "list_sites":
@@ -413,7 +450,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const res = await proxyFetch(`${baseUrl}/api/user/wallet`, token);
+          const res = await proxyFetch(`${baseUrl}/dashboard/billing/subscription`, token);
           if (res.ok) balanceSupported = true;
         } catch {
           // ignore
@@ -435,6 +472,9 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       const id = req.id || `site-${Date.now()}`;
       if (req.auth_token) {
         saveToken(id, req.auth_token);
+      }
+      if (req.admin_token) {
+        saveAdminToken(id, req.admin_token);
       }
 
       let existing = sites.find((s) => s.id === id);
@@ -460,8 +500,10 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       };
 
       const tokenToUse = req.auth_token || tokens[id];
+      const adminTokenToUse = req.admin_token || adminTokens[id];
+
       if (tokenToUse) {
-        const fetched = await fetchRealSiteDataInBrowser(newSite, tokenToUse);
+        const fetched = await fetchRealSiteDataInBrowser(newSite, tokenToUse, adminTokenToUse);
         if (fetched.balance !== undefined) {
           newSite.current_balance = fetched.balance;
           newSite.currency = fetched.currency || "CNY";
@@ -495,8 +537,9 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       const target = sites.find((s) => s.id === siteId);
       if (target) {
         const token = tokens[siteId];
+        const adminToken = adminTokens[siteId];
         if (token) {
-          const fetched = await fetchRealSiteDataInBrowser(target, token);
+          const fetched = await fetchRealSiteDataInBrowser(target, token, adminToken);
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
             target.currency = fetched.currency || "CNY";
@@ -516,8 +559,9 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
     case "refresh_all_sites": {
       for (const target of sites) {
         const token = tokens[target.id];
+        const adminToken = adminTokens[target.id];
         if (token) {
-          const fetched = await fetchRealSiteDataInBrowser(target, token);
+          const fetched = await fetchRealSiteDataInBrowser(target, token, adminToken);
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
             target.currency = fetched.currency || "CNY";
