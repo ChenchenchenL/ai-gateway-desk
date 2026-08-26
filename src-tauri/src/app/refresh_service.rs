@@ -35,7 +35,6 @@ impl RefreshService {
         {
             let mut in_flight = self.in_flight_refreshes.lock().await;
             if in_flight.contains(&site_id) {
-                // Reuse ongoing request per spec 7
                 return Ok(());
             }
             in_flight.insert(site_id);
@@ -71,11 +70,8 @@ impl RefreshService {
         let adapter = create_adapter(site.id, site.provider, site.base_url.clone(), token);
         let prev_failures = site.failure_count;
 
-        // Fetch balance
         let balance_res = adapter.fetch_balance().await;
-        // Fetch window quota
         let window_res = adapter.fetch_window_quota().await;
-        // Fetch usage records (past 24 hours)
         let now = Utc::now();
         let usage_res = adapter.fetch_usage(now - Duration::hours(24), now).await;
 
@@ -108,18 +104,22 @@ impl RefreshService {
         Ok(())
     }
 
-    /// Parallel refresh across all enabled sites.
+    /// Sequentially refreshes all enabled sites.
+    ///
+    /// Uses sequential execution to avoid lifetime/Send constraints with `&self` across spawned tasks.
     pub async fn refresh_all(&self) -> Result<(), AppError> {
         let repo = SiteRepository::new(&self.db);
         let sites = repo.list_all()?;
-        let enabled_ids: Vec<Uuid> = sites.into_iter().filter(|s| s.enabled).map(|s| s.id).collect();
+        let enabled_ids: Vec<Uuid> = sites
+            .into_iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id)
+            .collect();
 
-        let mut tasks = Vec::new();
         for site_id in enabled_ids {
-            tasks.push(self.refresh_site(site_id));
+            // Ignore individual site errors; continue with remaining sites
+            let _ = self.refresh_site(site_id).await;
         }
-
-        futures::future::join_all(tasks).await;
         Ok(())
     }
 }

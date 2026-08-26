@@ -30,6 +30,7 @@ tracing-appender = "0.2"
 keyring = { version = "3.6", features = ["windows-native"] }
 parking_lot = "0.12"
 async-trait = "0.1"
+futures = "0.3"
 
 [features]
 default = ["custom-protocol"]

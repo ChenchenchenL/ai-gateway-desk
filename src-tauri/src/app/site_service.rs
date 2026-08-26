@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::domain::capability::SiteCapabilities;
 use crate::domain::error::{AppError, ErrorCategory};
-use crate::domain::site::{ProviderType, Site};
+use crate::domain::site::Site;
 use crate::dto::{SaveSiteRequest, SiteResponse, TestConnectionRequest};
 use crate::infra::adapters::create_adapter;
 use crate::infra::storage::{secure_store::SecureStore, site_repo::SiteRepository, Database};

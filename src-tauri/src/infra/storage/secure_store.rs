@@ -6,7 +6,7 @@ use parking_lot::RwLock;
 use keyring::Entry;
 use uuid::Uuid;
 
-use crate::domain::error::{AppError, ErrorCategory};
+use crate::domain::error::AppError;
 
 const SERVICE_NAME: &str = "ai_gateway_desk";
 
@@ -16,7 +16,7 @@ fn fallback_store() -> &'static RwLock<HashMap<String, String>> {
     MEMORY_FALLBACK.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Secure store managing sensitive tokens.
+/// Secure store managing sensitive tokens via Windows DPAPI or memory fallback.
 pub struct SecureStore;
 
 impl SecureStore {
@@ -28,7 +28,6 @@ impl SecureStore {
                 return Ok(());
             }
         }
-        // Fallback store
         fallback_store().write().insert(key, token.to_string());
         Ok(())
     }
@@ -41,7 +40,6 @@ impl SecureStore {
                 return Ok(Some(pwd));
             }
         }
-        // Fallback store
         let store = fallback_store().read();
         Ok(store.get(&key).cloned())
     }
@@ -70,15 +68,15 @@ impl SecureStore {
         Ok(store.get(&key).cloned())
     }
 
-    /// Deletes credentials associated with a site.
+    /// Deletes both auth and admin credentials for a site.
     pub fn delete_tokens(site_id: &Uuid) -> Result<(), AppError> {
         let auth_key = format!("site_auth_{}", site_id);
         let admin_key = format!("site_admin_{}", site_id);
         if let Ok(entry) = Entry::new(SERVICE_NAME, &auth_key) {
-            let _ = entry.delete_password();
+            let _ = entry.delete_credential();
         }
         if let Ok(entry) = Entry::new(SERVICE_NAME, &admin_key) {
-            let _ = entry.delete_password();
+            let _ = entry.delete_credential();
         }
         let mut store = fallback_store().write();
         store.remove(&auth_key);
