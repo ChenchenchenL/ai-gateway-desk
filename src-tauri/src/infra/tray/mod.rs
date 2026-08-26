@@ -14,9 +14,15 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::err
 
     let menu = Menu::with_items(app, &[&show_item, &refresh_item, &quit_item])?;
 
-    let _tray = TrayIconBuilder::with_id("main_tray")
+    let mut builder = TrayIconBuilder::with_id("main_tray")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+
+    let _tray = builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {

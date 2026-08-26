@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "AI Gateway Desk",
         "width": 380,
         "height": 580,
