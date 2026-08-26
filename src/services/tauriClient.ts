@@ -105,6 +105,71 @@ function convertQuotaToBalance(rawQuota: number): number {
 }
 
 /**
+ * Extracts balance from all common OneAPI / NewAPI / OpenAI responses.
+ */
+function extractBalanceFromJson(json: unknown): { balance?: number; isUnlimited?: boolean } {
+  if (!json || typeof json !== "object") return {};
+  const obj = json as Record<string, unknown>;
+
+  // 1. Array of tokens (e.g. from /api/token/ or /api/token/?p=0&size=10)
+  const list = (Array.isArray(json)
+    ? json
+    : Array.isArray(obj.data)
+    ? obj.data
+    : Array.isArray((obj.data as Record<string, unknown>)?.items)
+    ? (obj.data as Record<string, unknown>).items
+    : Array.isArray((obj.data as Record<string, unknown>)?.list)
+    ? (obj.data as Record<string, unknown>).list
+    : []) as Record<string, unknown>[];
+
+  if (list.length > 0) {
+    for (const item of list) {
+      if (item?.unlimited_quota === true) {
+        return { isUnlimited: true };
+      }
+      const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
+      if (typeof itemQuota === "number") {
+        return { balance: convertQuotaToBalance(itemQuota) };
+      }
+    }
+  }
+
+  // 2. Target data object
+  const target = (obj.data && typeof obj.data === "object" ? obj.data : obj) as Record<string, unknown>;
+
+  if (target.unlimited_quota === true || obj.unlimited_quota === true) {
+    return { isUnlimited: true };
+  }
+
+  // 3. Quota / Balance numeric fields
+  const candidates = [
+    target.remain_quota,
+    target.quota,
+    target.balance,
+    target.current_balance,
+    target.total_quota,
+    obj.remain_quota,
+    obj.quota,
+    obj.balance,
+  ];
+
+  for (const val of candidates) {
+    if (typeof val === "number") {
+      return { balance: convertQuotaToBalance(val) };
+    }
+  }
+
+  // 4. OpenAI Billing subscription format
+  const hardLimit = (obj.hard_limit_usd ?? obj.system_hard_limit_usd ?? obj.total_available) as number | undefined;
+  if (typeof hardLimit === "number" && hardLimit > 0) {
+    const totalUsage = typeof obj.total_usage === "number" ? obj.total_usage : 0;
+    return { balance: convertQuotaToBalance(Math.max(0, hardLimit - totalUsage)) };
+  }
+
+  return {};
+}
+
+/**
  * Extracts prompt cache read tokens comprehensively across all New-API / One-API formats.
  */
 function extractCacheReadTokens(item: Record<string, unknown>): number {
@@ -125,7 +190,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Nested details
   const details = (item.prompt_tokens_details || (item.usage as Record<string, unknown>)?.prompt_tokens_details) as Record<string, unknown> | undefined;
   if (details) {
     for (const f of directFields) {
@@ -137,7 +201,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Usage root
   const usage = item.usage as Record<string, unknown> | undefined;
   if (usage) {
     for (const f of directFields) {
@@ -149,7 +212,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Content string
   if (typeof item.content === "string" && item.content.includes("cache")) {
     try {
       const nested = JSON.parse(item.content);
@@ -197,7 +259,7 @@ async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
       return res;
     }
   } catch {
-    // fallback to direct fetch
+    // fallback
   }
   return await fetch(targetUrl, {
     headers: { Authorization: `Bearer ${token}` },
@@ -219,13 +281,16 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
   let currency = "USD";
   const newLogs: StoredLog[] = [];
 
-  // 1. Query Real Balance
+  // 1. Query Real Balance across 8 candidate endpoints
   const balanceEndpoints = [
     `${baseUrl}/dashboard/billing/subscription`,
     `${baseUrl}/v1/dashboard/billing/subscription`,
-    `${baseUrl}/api/user/self`,
     `${baseUrl}/api/usage/token`,
+    `${baseUrl}/api/token/?p=0&size=10`,
     `${baseUrl}/api/token/`,
+    `${baseUrl}/api/token/self`,
+    `${baseUrl}/api/user/self`,
+    `${baseUrl}/api/user/info`,
   ];
 
   for (const url of balanceEndpoints) {
@@ -235,17 +300,13 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
         const json = await res.json();
         console.log(`[AI Gateway Desk] Balance raw response from ${url}:`, json);
 
-        // Check OpenAI subscription style
-        const hardLimit = json.hard_limit_usd ?? json.system_hard_limit_usd ?? json.total_available;
-        if (typeof hardLimit === "number") {
-          const totalUsage = typeof json.total_usage === "number" ? json.total_usage : 0;
-          balance = convertQuotaToBalance(Math.max(0, hardLimit - totalUsage));
+        const extracted = extractBalanceFromJson(json);
+        if (extracted.isUnlimited) {
+          balance = 999999;
           break;
         }
-        // Check OneAPI quota style
-        const quota = json?.data?.quota ?? json?.data?.remain_quota ?? json?.quota ?? json?.remain_quota;
-        if (typeof quota === "number") {
-          balance = convertQuotaToBalance(quota);
+        if (extracted.balance !== undefined) {
+          balance = extracted.balance;
           break;
         }
       }

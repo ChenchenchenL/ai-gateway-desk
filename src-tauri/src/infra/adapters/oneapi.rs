@@ -45,6 +45,71 @@ impl OneApiAdapter {
         }
     }
 
+    /// Extracts balance from various JSON responses.
+    fn extract_balance(json: &Value) -> Option<f64> {
+        let list = if let Some(arr) = json.as_array() {
+            Some(arr)
+        } else if let Some(arr) = json.get("data").and_then(|d| d.as_array()) {
+            Some(arr)
+        } else if let Some(arr) = json.get("data").and_then(|d| d.get("items")).and_then(|i| i.as_array()) {
+            Some(arr)
+        } else if let Some(arr) = json.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()) {
+            Some(arr)
+        } else {
+            None
+        };
+
+        if let Some(items) = list {
+            for item in items {
+                if let Some(true) = item.get("unlimited_quota").and_then(|v| v.as_bool()) {
+                    return Some(999999.0);
+                }
+                let item_quota = item.get("remain_quota")
+                    .or_else(|| item.get("quota"))
+                    .or_else(|| item.get("balance"))
+                    .and_then(|v| v.as_f64());
+                if let Some(q) = item_quota {
+                    return Some(Self::convert_quota_to_balance(q));
+                }
+            }
+        }
+
+        let target = json.get("data").unwrap_or(json);
+        if let Some(true) = target.get("unlimited_quota").or_else(|| json.get("unlimited_quota")).and_then(|v| v.as_bool()) {
+            return Some(999999.0);
+        }
+
+        let candidates = [
+            target.get("remain_quota"),
+            target.get("quota"),
+            target.get("balance"),
+            target.get("current_balance"),
+            target.get("total_quota"),
+            json.get("remain_quota"),
+            json.get("quota"),
+            json.get("balance"),
+        ];
+
+        for val in candidates {
+            if let Some(q) = val.and_then(|v| v.as_f64()) {
+                return Some(Self::convert_quota_to_balance(q));
+            }
+        }
+
+        let hard_limit = json.get("hard_limit_usd")
+            .or_else(|| json.get("system_hard_limit_usd"))
+            .or_else(|| json.get("total_available"))
+            .and_then(|v| v.as_f64());
+
+        if let Some(limit) = hard_limit {
+            let total_usage = json.get("total_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let raw_balance = (limit - total_usage).max(0.0);
+            return Some(Self::convert_quota_to_balance(raw_balance));
+        }
+
+        None
+    }
+
     /// Helper to parse Unix timestamp safely handling both seconds and milliseconds.
     fn parse_timestamp(val: Option<&Value>) -> DateTime<Utc> {
         let now = Utc::now();
@@ -150,64 +215,25 @@ impl GatewayAdapter for OneApiAdapter {
 
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
         let token = self.token.clone();
+        let endpoints = [
+            "/dashboard/billing/subscription",
+            "/v1/dashboard/billing/subscription",
+            "/api/usage/token",
+            "/api/token/?p=0&size=10",
+            "/api/token/",
+            "/api/token/self",
+            "/api/user/self",
+            "/api/user/info",
+        ];
 
-        // 1. Try standard /api/user/self
-        let url_user = self.build_url("/api/user/self");
-        if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url_user).bearer_auth(&token)).await {
-            if resp.status().is_success() {
-                if let Ok(json) = resp.json::<Value>().await {
-                    let quota_val = json.get("data").and_then(|d| d.get("quota")).or_else(|| json.get("quota"));
-                    if let Some(q) = quota_val.and_then(|v| v.as_f64()) {
-                        return Ok(BalanceInfo {
-                            balance: Some(Self::convert_quota_to_balance(q)),
-                            currency: "USD".to_string(),
-                            total_quota: None,
-                            expires_at: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        // 2. Try OpenAI-compatible /dashboard/billing/subscription & /v1/dashboard/billing/subscription
-        for path in &["/dashboard/billing/subscription", "/v1/dashboard/billing/subscription"] {
-            let url_sub = self.build_url(path);
-            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url_sub).bearer_auth(&token)).await {
+        for path in &endpoints {
+            let url = self.build_url(path);
+            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<Value>().await {
-                        let hard_limit = json.get("hard_limit_usd")
-                            .or_else(|| json.get("system_hard_limit_usd"))
-                            .or_else(|| json.get("total_available"))
-                            .and_then(|v| v.as_f64());
-
-                        if let Some(limit) = hard_limit {
-                            let total_usage = json.get("total_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let raw_balance = (limit - total_usage).max(0.0);
+                        if let Some(bal) = Self::extract_balance(&json) {
                             return Ok(BalanceInfo {
-                                balance: Some(Self::convert_quota_to_balance(raw_balance)),
-                                currency: "USD".to_string(),
-                                total_quota: Some(Self::convert_quota_to_balance(limit)),
-                                expires_at: None,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Try /api/usage/token or /api/token/
-        for path in &["/api/usage/token", "/api/token/"] {
-            let url_tok = self.build_url(path);
-            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url_tok).bearer_auth(&token)).await {
-                if resp.status().is_success() {
-                    if let Ok(json) = resp.json::<Value>().await {
-                        let rem_val = json.get("data").and_then(|d| d.get("remain_quota").or_else(|| d.get("quota")))
-                            .or_else(|| json.get("remain_quota"))
-                            .or_else(|| json.get("quota"));
-
-                        if let Some(q) = rem_val.and_then(|v| v.as_f64()) {
-                            return Ok(BalanceInfo {
-                                balance: Some(Self::convert_quota_to_balance(q)),
+                                balance: Some(bal),
                                 currency: "USD".to_string(),
                                 total_quota: None,
                                 expires_at: None,
