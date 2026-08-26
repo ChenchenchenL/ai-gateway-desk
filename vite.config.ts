@@ -1,15 +1,16 @@
 import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import { execFile } from "child_process";
 
 /**
- * Universal backend proxy middleware to bypass browser CORS during local web development.
+ * Universal backend proxy middleware utilizing curl for 100% reliable network, proxy & SSL handling.
  */
 function apiProxyPlugin(): Plugin {
   return {
     name: "api-proxy-plugin",
     configureServer(server) {
-      server.middlewares.use("/__api_proxy", async (req, res) => {
+      server.middlewares.use("/__api_proxy", (req, res) => {
         const urlObj = new URL(req.url || "", `http://${req.headers.host}`);
         const targetUrl = urlObj.searchParams.get("url");
 
@@ -20,27 +21,41 @@ function apiProxyPlugin(): Plugin {
           return;
         }
 
-        try {
-          const authHeader = req.headers["authorization"] || "";
-          const fetchRes = await fetch(targetUrl, {
-            headers: {
-              ...(authHeader ? { Authorization: authHeader } : {}),
-              "User-Agent": "AI-Gateway-Desk-Web/0.1.0",
-              Accept: "application/json",
-            },
-          });
-
-          const data = await fetchRes.text();
-          res.statusCode = fetchRes.status;
-          res.setHeader("Content-Type", "application/json; charset=utf-8");
-          res.setHeader("Access-Control-Allow-Origin", "*");
-          res.end(data);
-        } catch (err: unknown) {
-          res.statusCode = 500;
-          res.setHeader("Content-Type", "application/json");
-          const msg = err instanceof Error ? err.message : String(err);
-          res.end(JSON.stringify({ error: msg }));
+        const authHeader = req.headers["authorization"] || "";
+        const headersArgs: string[] = [
+          "-H", "User-Agent: AI-Gateway-Desk-Web/0.1.0",
+          "-H", "Accept: application/json, text/plain, */*",
+        ];
+        if (authHeader) {
+          headersArgs.push("-H", `Authorization: ${authHeader}`);
         }
+
+        execFile(
+          "curl",
+          ["-s", "-k", "-L", "-w", "\n__HTTP_CODE__:%{http_code}", ...headersArgs, targetUrl],
+          { maxBuffer: 10 * 1024 * 1024 },
+          (err, stdout, stderr) => {
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+
+            if (err) {
+              res.statusCode = 502;
+              res.end(JSON.stringify({ error: stderr || err.message }));
+              return;
+            }
+
+            const separatorIndex = stdout.lastIndexOf("\n__HTTP_CODE__:");
+            if (separatorIndex >= 0) {
+              const body = stdout.slice(0, separatorIndex);
+              const statusCode = parseInt(stdout.slice(separatorIndex + "\n__HTTP_CODE__:".length).trim(), 10) || 200;
+              res.statusCode = statusCode;
+              res.end(body);
+            } else {
+              res.statusCode = 200;
+              res.end(stdout);
+            }
+          }
+        );
       });
     },
   };

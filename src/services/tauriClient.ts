@@ -140,7 +140,7 @@ function convertQuotaToBalance(rawQuota: number): number {
 }
 
 /**
- * Extracts balance and currency from all common OneAPI / NewAPI / Wallet responses.
+ * Extracts balance and currency from all common OneAPI / NewAPI / Sub2API responses.
  */
 function extractBalanceFromJson(json: unknown): { balance?: number; currency?: string; isUnlimited?: boolean } {
   if (!json || typeof json !== "object") return {};
@@ -342,37 +342,53 @@ async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
 }
 
 /**
- * Real in-browser fetch querying balance and multi-page logs from upstream gateway.
+ * Real in-browser fetch querying balance, window quota and multi-page logs from upstream gateway.
  */
 async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminToken?: string): Promise<{
   balance?: number;
   currency?: string;
+  window_remaining_quota?: number;
+  window_reset_at?: string;
   logs?: StoredLog[];
   error?: string;
 }> {
   const baseUrl = site.base_url.replace(/\/+$/, "");
   let balance: number | undefined = undefined;
   let currency = site.currency || "CNY";
+  let windowRemainingQuota: number | undefined = undefined;
+  let windowResetAt: string | undefined = undefined;
   const newLogs: StoredLog[] = [];
 
-  // 1. Balance Endpoint Candidates (strictly prioritizing /api/user/self for user access tokens)
+  // 1. Balance & Profile Endpoint Candidates
   const balanceEndpoints: { url: string; token: string }[] = [];
 
-  if (adminToken) {
+  if (site.provider === "sub2_api") {
+    const token = adminToken || authToken;
     balanceEndpoints.push(
-      { url: `${baseUrl}/api/user/self`, token: adminToken },
-      { url: `${baseUrl}/api/user/dashboard`, token: adminToken }
+      { url: `${baseUrl}/api/user/info`, token },
+      { url: `${baseUrl}/api/user/profile`, token },
+      { url: `${baseUrl}/api/user`, token },
+      { url: `${baseUrl}/api/v1/user/info`, token },
+      { url: `${baseUrl}/dashboard/billing/subscription`, token },
+      { url: `${baseUrl}/v1/dashboard/billing/subscription`, token }
     );
-  }
+  } else {
+    if (adminToken) {
+      balanceEndpoints.push(
+        { url: `${baseUrl}/api/user/self`, token: adminToken },
+        { url: `${baseUrl}/api/user/dashboard`, token: adminToken }
+      );
+    }
 
-  if (authToken) {
-    balanceEndpoints.push(
-      { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
-      { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
-      { url: `${baseUrl}/api/token/?p=0&size=10`, token: authToken },
-      { url: `${baseUrl}/api/usage/token/`, token: authToken },
-      { url: `${baseUrl}/api/token/`, token: authToken }
-    );
+    if (authToken) {
+      balanceEndpoints.push(
+        { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
+        { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
+        { url: `${baseUrl}/api/token/?p=0&size=10`, token: authToken },
+        { url: `${baseUrl}/api/usage/token/`, token: authToken },
+        { url: `${baseUrl}/api/token/`, token: authToken }
+      );
+    }
   }
 
   for (const item of balanceEndpoints) {
@@ -399,18 +415,55 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     }
   }
 
-  // 2. Intelligent Log Endpoint Candidates (strictly pairing tokens with appropriate endpoints)
-  const logCandidates: { path: string; token: string }[] = [];
-
-  if (adminToken) {
-    // User Access Token is for /api/log/self (User's personal call logs across all tokens)
-    logCandidates.push({ path: "/api/log/self", token: adminToken });
+  // 2. Sub2API Window Quota
+  if (site.provider === "sub2_api") {
+    const token = adminToken || authToken;
+    const windowEndpoints = [
+      `${baseUrl}/api/window`,
+      `${baseUrl}/api/v1/window`,
+      `${baseUrl}/api/user/window`,
+      `${baseUrl}/api/limits`,
+    ];
+    for (const url of windowEndpoints) {
+      try {
+        const res = await proxyFetch(url, token);
+        if (res.ok) {
+          const json = await res.json();
+          console.log(`[AI Gateway Desk] Window quota success from ${url}:`, json);
+          const dataObj = (json?.data && typeof json.data === "object" ? json.data : json) as Record<string, unknown>;
+          if (typeof dataObj?.remaining_quota === "number") {
+            windowRemainingQuota = dataObj.remaining_quota;
+          }
+          if (dataObj?.reset_at) {
+            windowResetAt = parseLogTimestamp(dataObj.reset_at);
+          }
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
 
-  if (authToken) {
-    // API Key (sk-...) is for /api/log/token
-    logCandidates.push({ path: "/api/log/token", token: authToken });
-    logCandidates.push({ path: "/api/log/self", token: authToken });
+  // 3. Intelligent Log Endpoint Candidates
+  const logCandidates: { path: string; token: string }[] = [];
+
+  if (site.provider === "sub2_api") {
+    const token = adminToken || authToken;
+    logCandidates.push(
+      { path: "/api/log", token },
+      { path: "/api/v1/log", token },
+      { path: "/api/log/self", token },
+      { path: "/api/log/token", token }
+    );
+  } else {
+    if (adminToken) {
+      logCandidates.push({ path: "/api/log/self", token: adminToken });
+    }
+    if (authToken) {
+      logCandidates.push({ path: "/api/log/token", token: authToken });
+      logCandidates.push({ path: "/api/log/self", token: authToken });
+    }
   }
 
   for (const candidate of logCandidates) {
@@ -442,7 +495,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
 
         for (const rawItem of rawItems) {
           newLogs.push({
-            id: String(rawItem.id || rawItem.record_id || `${rawItem.created_at}_${Math.random().toString(36).slice(2)}`),
+            id: String(rawItem.id || rawItem.record_id || `${rawItem.created_at || rawItem.timestamp}_${Math.random().toString(36).slice(2)}`),
             site_id: site.id,
             timestamp: parseLogTimestamp(rawItem.created_at ?? rawItem.timestamp ?? rawItem.time ?? rawItem.created),
             model_name: String(rawItem.model_name ?? rawItem.model ?? "unknown"),
@@ -465,7 +518,13 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     }
   }
 
-  return { balance, currency, logs: newLogs };
+  return {
+    balance,
+    currency,
+    window_remaining_quota: windowRemainingQuota,
+    window_reset_at: windowResetAt,
+    logs: newLogs,
+  };
 }
 
 /**
@@ -502,7 +561,8 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const res = await proxyFetch(`${baseUrl}/api/user/self`, token);
+          const testPath = req.provider === "sub2_api" ? `${baseUrl}/api/user/info` : `${baseUrl}/api/user/self`;
+          const res = await proxyFetch(testPath, token);
           if (res.ok) balanceSupported = true;
         } catch {
           // ignore
@@ -545,7 +605,8 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
         },
         current_balance: existing?.current_balance,
         currency: existing?.currency || "CNY",
-        window_remaining_quota: req.provider === "sub2_api" ? 90 : undefined,
+        window_remaining_quota: existing?.window_remaining_quota,
+        window_reset_at: existing?.window_reset_at,
         last_success_at: existing?.last_success_at,
         failure_count: 0,
         has_auth_token: Boolean(req.auth_token || tokens[id]),
@@ -559,6 +620,12 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
         if (fetched.balance !== undefined) {
           newSite.current_balance = fetched.balance;
           newSite.currency = fetched.currency || "CNY";
+        }
+        if (fetched.window_remaining_quota !== undefined) {
+          newSite.window_remaining_quota = fetched.window_remaining_quota;
+        }
+        if (fetched.window_reset_at !== undefined) {
+          newSite.window_reset_at = fetched.window_reset_at;
         }
         if (fetched.logs && fetched.logs.length > 0) {
           saveStoredLogs(id, fetched.logs);
@@ -596,6 +663,12 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
             target.current_balance = fetched.balance;
             target.currency = fetched.currency || "CNY";
           }
+          if (fetched.window_remaining_quota !== undefined) {
+            target.window_remaining_quota = fetched.window_remaining_quota;
+          }
+          if (fetched.window_reset_at !== undefined) {
+            target.window_reset_at = fetched.window_reset_at;
+          }
           if (fetched.logs && fetched.logs.length > 0) {
             saveStoredLogs(siteId, fetched.logs);
           }
@@ -617,6 +690,12 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
             target.currency = fetched.currency || "CNY";
+          }
+          if (fetched.window_remaining_quota !== undefined) {
+            target.window_remaining_quota = fetched.window_remaining_quota;
+          }
+          if (fetched.window_reset_at !== undefined) {
+            target.window_reset_at = fetched.window_reset_at;
           }
           if (fetched.logs && fetched.logs.length > 0) {
             saveStoredLogs(target.id, fetched.logs);
