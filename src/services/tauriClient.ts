@@ -185,6 +185,27 @@ function extractCacheWriteTokens(item: Record<string, unknown>): number {
 }
 
 /**
+ * Bypasses CORS in browser development via local Vite proxy.
+ */
+async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
+  const proxyUrl = `/__api_proxy?url=${encodeURIComponent(targetUrl)}`;
+  try {
+    const res = await fetch(proxyUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status !== 404 && res.status !== 502) {
+      return res;
+    }
+  } catch {
+    // fallback to direct fetch
+  }
+  return await fetch(targetUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+    mode: "cors",
+  });
+}
+
+/**
  * Real in-browser fetch querying balance and logs directly from upstream gateway.
  */
 async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
@@ -209,12 +230,11 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
 
   for (const url of balanceEndpoints) {
     try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        mode: "cors",
-      });
+      const res = await proxyFetch(url, token);
       if (res.ok) {
         const json = await res.json();
+        console.log(`[AI Gateway Desk] Balance raw response from ${url}:`, json);
+
         // Check OpenAI subscription style
         const hardLimit = json.hard_limit_usd ?? json.system_hard_limit_usd ?? json.total_available;
         if (typeof hardLimit === "number") {
@@ -229,8 +249,8 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
           break;
         }
       }
-    } catch {
-      // CORS or network error, continue to next
+    } catch (err) {
+      console.warn(`[AI Gateway Desk] Balance query failed on ${url}:`, err);
     }
   }
 
@@ -244,12 +264,11 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
 
   for (const url of logEndpoints) {
     try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        mode: "cors",
-      });
+      const res = await proxyFetch(url, token);
       if (res.ok) {
         const json = await res.json();
+        console.log(`[AI Gateway Desk] Usage logs raw response from ${url}:`, json);
+
         const rawItems = (Array.isArray(json)
           ? json
           : Array.isArray(json?.data)
@@ -278,8 +297,8 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
           break;
         }
       }
-    } catch {
-      // CORS or network error
+    } catch (err) {
+      console.warn(`[AI Gateway Desk] Logs query failed on ${url}:`, err);
     }
   }
 
@@ -319,10 +338,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const res = await fetch(`${baseUrl}/dashboard/billing/subscription`, {
-            headers: { Authorization: `Bearer ${token}` },
-            mode: "cors",
-          });
+          const res = await proxyFetch(`${baseUrl}/dashboard/billing/subscription`, token);
           if (res.ok) balanceSupported = true;
         } catch {
           // ignore
