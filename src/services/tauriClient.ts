@@ -363,14 +363,13 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   const balanceEndpoints: { url: string; token: string }[] = [];
 
   if (site.provider === "sub2_api") {
-    const token = adminToken || authToken;
+    const token = authToken || adminToken || "";
     balanceEndpoints.push(
+      { url: `${baseUrl}/v1/sub2api/billing`, token },
+      { url: `${baseUrl}/api/v1/auth/me`, token: adminToken || token },
       { url: `${baseUrl}/api/user/info`, token },
       { url: `${baseUrl}/api/user/profile`, token },
-      { url: `${baseUrl}/api/user`, token },
-      { url: `${baseUrl}/api/v1/user/info`, token },
-      { url: `${baseUrl}/dashboard/billing/subscription`, token },
-      { url: `${baseUrl}/v1/dashboard/billing/subscription`, token }
+      { url: `${baseUrl}/api/user`, token }
     );
   } else {
     if (adminToken) {
@@ -382,6 +381,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
 
     if (authToken) {
       balanceEndpoints.push(
+        { url: `${baseUrl}/v1/sub2api/billing`, token: authToken },
         { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
         { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
         { url: `${baseUrl}/api/token/?p=0&size=10`, token: authToken },
@@ -417,8 +417,9 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
 
   // 2. Sub2API Window Quota
   if (site.provider === "sub2_api") {
-    const token = adminToken || authToken;
+    const token = authToken || adminToken || "";
     const windowEndpoints = [
+      `${baseUrl}/v1/sub2api/billing`,
       `${baseUrl}/api/window`,
       `${baseUrl}/api/v1/window`,
       `${baseUrl}/api/user/window`,
@@ -431,8 +432,9 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
           const json = await res.json();
           console.log(`[AI Gateway Desk] Window quota success from ${url}:`, json);
           const dataObj = (json?.data && typeof json.data === "object" ? json.data : json) as Record<string, unknown>;
-          if (typeof dataObj?.remaining_quota === "number") {
-            windowRemainingQuota = dataObj.remaining_quota;
+          const remaining = (dataObj?.remaining_quota ?? dataObj?.quota_remaining ?? dataObj?.window_remaining) as number | undefined;
+          if (typeof remaining === "number") {
+            windowRemainingQuota = remaining;
           }
           if (dataObj?.reset_at) {
             windowResetAt = parseLogTimestamp(dataObj.reset_at);
@@ -451,6 +453,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   if (site.provider === "sub2_api") {
     const token = adminToken || authToken;
     logCandidates.push(
+      { path: "/api/v1/usage", token },
       { path: "/api/log", token },
       { path: "/api/v1/log", token },
       { path: "/api/log/self", token },
@@ -463,6 +466,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     if (authToken) {
       logCandidates.push({ path: "/api/log/token", token: authToken });
       logCandidates.push({ path: "/api/log/self", token: authToken });
+      logCandidates.push({ path: "/api/v1/usage", token: authToken });
     }
   }
 
@@ -561,7 +565,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const testPath = req.provider === "sub2_api" ? `${baseUrl}/api/user/info` : `${baseUrl}/api/user/self`;
+          const testPath = req.provider === "sub2_api" ? `${baseUrl}/v1/sub2api/billing` : `${baseUrl}/api/user/self`;
           const res = await proxyFetch(testPath, token);
           if (res.ok) balanceSupported = true;
         } catch {

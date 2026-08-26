@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
-use serde::Deserialize;
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::trait_def::{BalanceInfo, GatewayAdapter, WindowQuotaInfo};
@@ -37,88 +37,101 @@ impl Sub2ApiAdapter {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct Sub2ApiUserResponse {
-    balance: Option<f64>,
-    currency: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Sub2ApiWindowResponse {
-    window_limit: Option<u64>,
-    remaining_quota: Option<u64>,
-    reset_at: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Sub2ApiLogItem {
-    id: Option<String>,
-    timestamp: Option<i64>,
-    model: Option<String>,
-    prompt_tokens: Option<u64>,
-    completion_tokens: Option<u64>,
-    cache_read_tokens: Option<u64>,
-}
-
 #[async_trait]
 impl GatewayAdapter for Sub2ApiAdapter {
     async fn probe_capabilities(&self) -> Result<SiteCapabilities, AppError> {
-        let url = self.build_url("/api/user/info");
-        let token = self.token.clone();
-        let resp = self.http
-            .execute_with_retry(|client| {
-                client.get(&url).bearer_auth(&token)
-            })
-            .await?;
-
-        if !resp.status().is_success() {
-            return Err(HttpClient::map_status_code(resp.status()));
-        }
+        let _ = self.fetch_balance().await;
         Ok(SiteCapabilities::sub2api_default())
     }
 
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
-        let url = self.build_url("/api/user/info");
         let token = self.token.clone();
-        let resp = self.http
-            .execute_with_retry(|client| {
-                client.get(&url).bearer_auth(&token)
-            })
-            .await?;
+        let endpoints = [
+            "/v1/sub2api/billing",
+            "/api/v1/auth/me",
+            "/api/user/info",
+            "/api/user/profile",
+            "/api/user",
+        ];
 
-        let body: Sub2ApiUserResponse = resp.json().await
-            .map_err(|e| AppError::new(ErrorCategory::Parse, format!("Failed to parse balance: {}", e)))?;
+        for path in &endpoints {
+            let url = self.build_url(path);
+            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<Value>().await {
+                        let target = json.get("data").unwrap_or(&json);
+                        let balance = target.get("balance")
+                            .or_else(|| target.get("remaining_quota"))
+                            .or_else(|| target.get("quota"))
+                            .and_then(|v| v.as_f64());
+
+                        let currency = target.get("currency")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("CNY")
+                            .to_string();
+
+                        return Ok(BalanceInfo {
+                            balance,
+                            currency,
+                            total_quota: None,
+                            expires_at: None,
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(BalanceInfo {
-            balance: body.balance,
-            currency: body.currency.unwrap_or_else(|| "USD".to_string()),
+            balance: None,
+            currency: "CNY".to_string(),
             total_quota: None,
             expires_at: None,
         })
     }
 
     async fn fetch_window_quota(&self) -> Result<WindowQuotaInfo, AppError> {
-        let url = self.build_url("/api/window");
         let token = self.token.clone();
-        let resp = self.http
-            .execute_with_retry(|client| {
-                client.get(&url).bearer_auth(&token)
-            })
-            .await?;
+        let endpoints = [
+            "/v1/sub2api/billing",
+            "/api/window",
+            "/api/v1/window",
+            "/api/user/window",
+            "/api/limits",
+        ];
 
-        if !resp.status().is_success() {
-            return Err(HttpClient::map_status_code(resp.status()));
+        for path in &endpoints {
+            let url = self.build_url(path);
+            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<Value>().await {
+                        let target = json.get("data").unwrap_or(&json);
+                        let remaining_quota = target.get("remaining_quota")
+                            .or_else(|| target.get("quota_remaining"))
+                            .or_else(|| target.get("window_remaining"))
+                            .and_then(|v| v.as_u64());
+
+                        let window_limit = target.get("window_limit")
+                            .or_else(|| target.get("total_quota"))
+                            .and_then(|v| v.as_u64());
+
+                        let reset_at = target.get("reset_at")
+                            .and_then(|v| v.as_i64())
+                            .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
+
+                        return Ok(WindowQuotaInfo {
+                            window_limit,
+                            remaining_quota,
+                            reset_at,
+                        });
+                    }
+                }
+            }
         }
 
-        let body: Sub2ApiWindowResponse = resp.json().await
-            .map_err(|e| AppError::new(ErrorCategory::Parse, format!("Failed to parse window quota: {}", e)))?;
-
-        let reset_at = body.reset_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single());
-
         Ok(WindowQuotaInfo {
-            window_limit: body.window_limit,
-            remaining_quota: body.remaining_quota,
-            reset_at,
+            window_limit: None,
+            remaining_quota: None,
+            reset_at: None,
         })
     }
 
@@ -127,33 +140,54 @@ impl GatewayAdapter for Sub2ApiAdapter {
         _start_time: DateTime<Utc>,
         _end_time: DateTime<Utc>,
     ) -> Result<Vec<UsageRecord>, AppError> {
-        let url = self.build_url("/api/log");
         let token = self.token.clone();
-        let resp = self.http
-            .execute_with_retry(|client| {
-                client.get(&url).bearer_auth(&token)
-            })
-            .await?;
+        let endpoints = [
+            "/api/v1/usage",
+            "/api/log",
+            "/api/v1/log",
+            "/api/usage",
+        ];
 
-        let items: Vec<Sub2ApiLogItem> = resp.json().await.unwrap_or_default();
+        let mut items = Vec::new();
+        for path in &endpoints {
+            let url = self.build_url(path);
+            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<Value>().await {
+                        if let Some(arr) = json.as_array().or_else(|| json.get("data").and_then(|d| d.as_array())) {
+                            items = arr.clone();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         let now = Utc::now();
         let records = items.into_iter().map(|item| {
-            let model_raw = item.model.unwrap_or_else(|| "unknown".to_string());
+            let model_raw = item.get("model")
+                .or_else(|| item.get("model_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
             let model_normalized = model_raw.trim().to_lowercase();
-            let timestamp = item.timestamp
+
+            let timestamp = item.get("timestamp")
+                .or_else(|| item.get("created_at"))
+                .and_then(|v| v.as_i64())
                 .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
                 .unwrap_or(now);
 
             UsageRecord {
                 id: Uuid::new_v4(),
                 site_id: self.site_id,
-                server_record_id: item.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                server_record_id: item.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| Uuid::new_v4().to_string()),
                 timestamp,
                 model_raw,
                 model_normalized,
-                input_tokens: item.prompt_tokens.unwrap_or(0),
-                output_tokens: item.completion_tokens.unwrap_or(0),
-                cache_read_tokens: item.cache_read_tokens.unwrap_or(0),
+                input_tokens: item.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                output_tokens: item.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                cache_read_tokens: item.get("cache_read_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                 cache_write_tokens: 0,
                 request_count: 1,
                 source: UsageSource::GatewayServer,
