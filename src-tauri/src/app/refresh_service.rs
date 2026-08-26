@@ -73,40 +73,47 @@ impl RefreshService {
         let balance_res = adapter.fetch_balance().await;
         let window_res = adapter.fetch_window_quota().await;
         let now = Utc::now();
-        let usage_res = adapter.fetch_usage(now - Duration::hours(24), now).await;
+        let usage_res = adapter.fetch_usage(now - Duration::hours(72), now).await;
 
-        match balance_res {
-            Ok(bal_info) => {
-                let window_info = window_res.ok();
-                let window_rem = window_info.as_ref().and_then(|w| w.remaining_quota);
-                let window_rst = window_info.as_ref().and_then(|w| w.reset_at);
+        let has_balance = balance_res.is_ok();
+        let has_usage = usage_res.as_ref().map(|r| !r.is_empty()).unwrap_or(false);
 
-                site.record_success(bal_info.balance, Some(bal_info.currency), window_rem, window_rst);
-                repo.save(&site)?;
+        if has_balance || has_usage || usage_res.is_ok() {
+            let bal_info = balance_res.ok();
+            let window_info = window_res.ok();
+            let window_rem = window_info.as_ref().and_then(|w| w.remaining_quota);
+            let window_rst = window_info.as_ref().and_then(|w| w.reset_at);
 
-                if let Ok(records) = usage_res {
-                    if !records.is_empty() {
-                        let usage_repo = UsageRepository::new(&self.db);
-                        let _ = usage_repo.insert_batch(&records);
-                    }
-                }
+            let new_balance = bal_info.as_ref().and_then(|b| b.balance).or(site.current_balance);
+            let new_currency = bal_info.map(|b| b.currency).unwrap_or(site.currency);
 
-                if prev_failures >= 3 {
-                    AlertService::notify_recovery(&site.name)?;
+            site.record_success(new_balance, Some(new_currency), window_rem, window_rst);
+            repo.save(&site)?;
+
+            if let Ok(records) = usage_res {
+                if !records.is_empty() {
+                    let usage_repo = UsageRepository::new(&self.db);
+                    let _ = usage_repo.insert_batch(&records);
                 }
             }
-            Err(err) => {
-                site.record_failure(err.message.clone());
-                repo.save(&site)?;
-                AlertService::check_consecutive_failures(&site.name, site.failure_count)?;
+
+            if prev_failures >= 3 {
+                let _ = AlertService::notify_recovery(&site.name);
             }
+        } else {
+            let err_msg = balance_res.err().map(|e| e.message)
+                .or_else(|| usage_res.err().map(|e| e.message))
+                .unwrap_or_else(|| "Unknown sync failure".to_string());
+
+            site.record_failure(err_msg);
+            repo.save(&site)?;
+            let _ = AlertService::check_consecutive_failures(&site.name, site.failure_count);
         }
+
         Ok(())
     }
 
     /// Sequentially refreshes all enabled sites.
-    ///
-    /// Uses sequential execution to avoid lifetime/Send constraints with `&self` across spawned tasks.
     pub async fn refresh_all(&self) -> Result<(), AppError> {
         let repo = SiteRepository::new(&self.db);
         let sites = repo.list_all()?;
@@ -117,7 +124,6 @@ impl RefreshService {
             .collect();
 
         for site_id in enabled_ids {
-            // Ignore individual site errors; continue with remaining sites
             let _ = self.refresh_site(site_id).await;
         }
         Ok(())
