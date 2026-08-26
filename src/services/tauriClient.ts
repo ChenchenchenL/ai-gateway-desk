@@ -96,11 +96,9 @@ function saveStoredLogs(siteId: string, incomingLogs: StoredLog[]) {
   const existing = getStoredLogs(siteId);
   const map = new Map<string, StoredLog>();
 
-  // Index existing
   for (const log of existing) {
     map.set(log.id, log);
   }
-  // Merge incoming
   for (const log of incomingLogs) {
     map.set(log.id, log);
   }
@@ -108,7 +106,6 @@ function saveStoredLogs(siteId: string, incomingLogs: StoredLog[]) {
   const merged = Array.from(map.values());
   merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-  // Keep up to 2000 most recent logs
   const trimmed = merged.slice(0, 2000);
   localStorage.setItem(STORAGE_LOGS_PREFIX + siteId, JSON.stringify(trimmed));
 }
@@ -234,7 +231,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Check "other" field
   if (item.other) {
     if (typeof item.other === "object") {
       const read = extractCacheReadTokens(item.other as Record<string, unknown>);
@@ -252,7 +248,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Check "content" field
   if (typeof item.content === "string" && item.content.includes("cache")) {
     try {
       const nested = JSON.parse(item.content);
@@ -360,15 +355,13 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   let currency = site.currency || "CNY";
   const newLogs: StoredLog[] = [];
 
-  // 1. Balance Endpoint Candidates
+  // 1. Balance Endpoint Candidates (strictly prioritizing /api/user/self for user access tokens)
   const balanceEndpoints: { url: string; token: string }[] = [];
 
   if (adminToken) {
     balanceEndpoints.push(
-      { url: `${baseUrl}/api/user/wallet`, token: adminToken },
       { url: `${baseUrl}/api/user/self`, token: adminToken },
-      { url: `${baseUrl}/api/user/dashboard`, token: adminToken },
-      { url: `${baseUrl}/api/wallet`, token: adminToken }
+      { url: `${baseUrl}/api/user/dashboard`, token: adminToken }
     );
   }
 
@@ -420,10 +413,6 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     logCandidates.push({ path: "/api/log/self", token: authToken });
   }
 
-  if (adminToken) {
-    logCandidates.push({ path: "/api/log", token: adminToken });
-  }
-
   for (const candidate of logCandidates) {
     let candidateSuccessful = false;
 
@@ -431,7 +420,6 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
       const pageUrl = `${baseUrl}${candidate.path}?page_size=100&p=${page}`;
       try {
         const res = await proxyFetch(pageUrl, candidate.token);
-        // If not successful on page 0, skip this whole endpoint candidate immediately!
         if (!res.ok) {
           break;
         }
@@ -514,7 +502,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const res = await proxyFetch(`${baseUrl}/api/user/wallet`, token);
+          const res = await proxyFetch(`${baseUrl}/api/user/self`, token);
           if (res.ok) balanceSupported = true;
         } catch {
           // ignore
