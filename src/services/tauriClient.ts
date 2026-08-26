@@ -95,6 +95,96 @@ function parseLogTimestamp(val: unknown): string {
 }
 
 /**
+ * Converts One-API / New-API quota points (500,000 = $1.00 USD) to balance.
+ */
+function convertQuotaToBalance(rawQuota: number): number {
+  if (rawQuota > 500) {
+    return Number((rawQuota / 500000).toFixed(2));
+  }
+  return Number(rawQuota.toFixed(2));
+}
+
+/**
+ * Extracts prompt cache read tokens comprehensively across all New-API / One-API formats.
+ */
+function extractCacheReadTokens(item: Record<string, unknown>): number {
+  const directFields = [
+    "cache_tokens",
+    "prompt_cache_tokens",
+    "cached_tokens",
+    "cache_read_tokens",
+    "cache_read",
+    "cache_read_input_tokens",
+  ];
+
+  for (const f of directFields) {
+    const v = item[f];
+    if (v !== undefined && v !== null) {
+      const num = Number(v);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+
+  // Nested details
+  const details = (item.prompt_tokens_details || (item.usage as Record<string, unknown>)?.prompt_tokens_details) as Record<string, unknown> | undefined;
+  if (details) {
+    for (const f of directFields) {
+      const v = details[f];
+      if (v !== undefined && v !== null) {
+        const num = Number(v);
+        if (!isNaN(num) && num > 0) return num;
+      }
+    }
+  }
+
+  // Usage root
+  const usage = item.usage as Record<string, unknown> | undefined;
+  if (usage) {
+    for (const f of directFields) {
+      const v = usage[f];
+      if (v !== undefined && v !== null) {
+        const num = Number(v);
+        if (!isNaN(num) && num > 0) return num;
+      }
+    }
+  }
+
+  // Content string
+  if (typeof item.content === "string" && item.content.includes("cache")) {
+    try {
+      const nested = JSON.parse(item.content);
+      return extractCacheReadTokens(nested);
+    } catch {
+      const match = item.content.match(/cache[_\w]*tokens["':\s]+(\d+)/i) || item.content.match(/cached[_\w]*["':\s]+(\d+)/i);
+      if (match && match[1]) {
+        return Number(match[1]);
+      }
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Extracts prompt cache write/creation tokens.
+ */
+function extractCacheWriteTokens(item: Record<string, unknown>): number {
+  const directFields = [
+    "cache_write_tokens",
+    "cache_write",
+    "cache_creation_input_tokens",
+  ];
+  for (const f of directFields) {
+    const v = item[f];
+    if (v !== undefined && v !== null) {
+      const num = Number(v);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+  return 0;
+}
+
+/**
  * Real in-browser fetch querying balance and logs directly from upstream gateway.
  */
 async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
@@ -129,13 +219,13 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
         const hardLimit = json.hard_limit_usd ?? json.system_hard_limit_usd ?? json.total_available;
         if (typeof hardLimit === "number") {
           const totalUsage = typeof json.total_usage === "number" ? json.total_usage : 0;
-          balance = Math.max(0, hardLimit - totalUsage);
+          balance = convertQuotaToBalance(Math.max(0, hardLimit - totalUsage));
           break;
         }
         // Check OneAPI quota style
         const quota = json?.data?.quota ?? json?.data?.remain_quota ?? json?.quota ?? json?.remain_quota;
         if (typeof quota === "number") {
-          balance = quota;
+          balance = convertQuotaToBalance(quota);
           break;
         }
       }
@@ -160,7 +250,7 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
       });
       if (res.ok) {
         const json = await res.json();
-        const rawItems = Array.isArray(json)
+        const rawItems = (Array.isArray(json)
           ? json
           : Array.isArray(json?.data)
           ? json.data
@@ -170,7 +260,7 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
           ? json.data.list
           : Array.isArray(json?.data?.rows)
           ? json.data.rows
-          : [];
+          : []) as Record<string, unknown>[];
 
         if (rawItems.length > 0) {
           for (const item of rawItems) {
@@ -181,8 +271,8 @@ async function fetchRealSiteDataInBrowser(site: Site, token: string): Promise<{
               model_name: String(item.model_name ?? item.model ?? "unknown"),
               input_tokens: Number(item.prompt_tokens ?? item.input_tokens ?? item.prompt ?? 0),
               output_tokens: Number(item.completion_tokens ?? item.output_tokens ?? item.completion ?? 0),
-              cache_read_tokens: Number(item.cache_read_tokens ?? item.cache_read ?? item.cached_tokens ?? 0),
-              cache_write_tokens: Number(item.cache_write_tokens ?? item.cache_write ?? 0),
+              cache_read_tokens: extractCacheReadTokens(item),
+              cache_write_tokens: extractCacheWriteTokens(item),
             });
           }
           break;

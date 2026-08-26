@@ -1,6 +1,6 @@
 //! New-API Relay Platform Adapter
 //!
-//! Direct balance querying, prompt cache metrics extraction, and capability probing for New-API.
+//! Direct balance querying, comprehensive prompt cache metrics extraction, and capability probing.
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
@@ -34,6 +34,15 @@ impl NewApiAdapter {
 
     fn build_url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
+    }
+
+    /// Converts New-API / One-API Quota points (500,000 = $1.00) to USD balance.
+    fn convert_quota_to_balance(raw_quota: f64) -> f64 {
+        if raw_quota > 500.0 {
+            (raw_quota / 500_000.0 * 100.0).round() / 100.0
+        } else {
+            (raw_quota * 100.0).round() / 100.0
+        }
     }
 
     /// Helper to parse Unix timestamp safely handling both seconds and milliseconds.
@@ -84,13 +93,101 @@ impl NewApiAdapter {
         }
         Vec::new()
     }
+
+    /// Recursively extracts cache read tokens from various New-API log field conventions.
+    fn extract_cache_read_tokens(item: &Value) -> u64 {
+        let direct_fields = [
+            "cache_tokens",
+            "prompt_cache_tokens",
+            "cached_tokens",
+            "cache_read_tokens",
+            "cache_read",
+            "cache_read_input_tokens",
+        ];
+
+        for key in direct_fields {
+            if let Some(v) = item.get(key) {
+                if let Some(n) = v.as_u64() {
+                    if n > 0 { return n; }
+                }
+                if let Some(s) = v.as_str() {
+                    if let Ok(n) = s.parse::<u64>() {
+                        if n > 0 { return n; }
+                    }
+                }
+            }
+        }
+
+        // Check nested prompt_tokens_details or usage
+        if let Some(details) = item.get("prompt_tokens_details").or_else(|| item.get("usage").and_then(|u| u.get("prompt_tokens_details"))) {
+            for key in direct_fields {
+                if let Some(v) = details.get(key) {
+                    if let Some(n) = v.as_u64() {
+                        if n > 0 { return n; }
+                    }
+                }
+            }
+        }
+
+        // Check usage root
+        if let Some(usage) = item.get("usage") {
+            for key in direct_fields {
+                if let Some(v) = usage.get(key) {
+                    if let Some(n) = v.as_u64() {
+                        if n > 0 { return n; }
+                    }
+                }
+            }
+        }
+
+        // Check content string if it contains JSON payload
+        if let Some(content_str) = item.get("content").and_then(|c| c.as_str()) {
+            if content_str.contains("cache") {
+                if let Ok(nested_json) = serde_json::from_str::<Value>(content_str) {
+                    let nested_read = Self::extract_cache_read_tokens(&nested_json);
+                    if nested_read > 0 { return nested_read; }
+                }
+            }
+        }
+
+        0
+    }
+
+    /// Extracts cache creation / write tokens.
+    fn extract_cache_write_tokens(item: &Value) -> u64 {
+        let direct_fields = [
+            "cache_write_tokens",
+            "cache_write",
+            "cache_creation_input_tokens",
+        ];
+
+        for key in direct_fields {
+            if let Some(v) = item.get(key) {
+                if let Some(n) = v.as_u64() {
+                    if n > 0 { return n; }
+                }
+            }
+        }
+
+        if let Some(details) = item.get("prompt_tokens_details").or_else(|| item.get("usage")) {
+            for key in direct_fields {
+                if let Some(v) = details.get(key) {
+                    if let Some(n) = v.as_u64() {
+                        if n > 0 { return n; }
+                    }
+                }
+            }
+        }
+
+        0
+    }
 }
 
 #[async_trait]
 impl GatewayAdapter for NewApiAdapter {
     async fn probe_capabilities(&self) -> Result<SiteCapabilities, AppError> {
         let _ = self.fetch_balance().await;
-        Ok(SiteCapabilities::one_api_default())
+        Ok(SiteCapabilities::new_api_default())
     }
 
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
@@ -104,7 +201,7 @@ impl GatewayAdapter for NewApiAdapter {
                     let quota_val = json.get("data").and_then(|d| d.get("quota")).or_else(|| json.get("quota"));
                     if let Some(q) = quota_val.and_then(|v| v.as_f64()) {
                         return Ok(BalanceInfo {
-                            balance: Some(q),
+                            balance: Some(Self::convert_quota_to_balance(q)),
                             currency: "USD".to_string(),
                             total_quota: None,
                             expires_at: None,
@@ -127,11 +224,11 @@ impl GatewayAdapter for NewApiAdapter {
 
                         if let Some(limit) = hard_limit {
                             let total_usage = json.get("total_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let balance = (limit - total_usage).max(0.0);
+                            let raw_balance = (limit - total_usage).max(0.0);
                             return Ok(BalanceInfo {
-                                balance: Some(balance),
+                                balance: Some(Self::convert_quota_to_balance(raw_balance)),
                                 currency: "USD".to_string(),
-                                total_quota: Some(limit),
+                                total_quota: Some(Self::convert_quota_to_balance(limit)),
                                 expires_at: None,
                             });
                         }
@@ -152,7 +249,7 @@ impl GatewayAdapter for NewApiAdapter {
 
                         if let Some(q) = rem_val.and_then(|v| v.as_f64()) {
                             return Ok(BalanceInfo {
-                                balance: Some(q),
+                                balance: Some(Self::convert_quota_to_balance(q)),
                                 currency: "USD".to_string(),
                                 total_quota: None,
                                 expires_at: None,
@@ -218,18 +315,8 @@ impl GatewayAdapter for NewApiAdapter {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
 
-            let cache_read_tokens = item.get("cache_read_tokens")
-                .or_else(|| item.get("cache_read"))
-                .or_else(|| item.get("cached_tokens"))
-                .or_else(|| item.get("cache_read_input_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-
-            let cache_write_tokens = item.get("cache_write_tokens")
-                .or_else(|| item.get("cache_write"))
-                .or_else(|| item.get("cache_creation_input_tokens"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let cache_read_tokens = Self::extract_cache_read_tokens(&item);
+            let cache_write_tokens = Self::extract_cache_write_tokens(&item);
 
             let server_record_id = item.get("id")
                 .and_then(|v| {
