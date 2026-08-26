@@ -106,7 +106,6 @@ function saveStoredLogs(siteId: string, incomingLogs: StoredLog[]) {
   }
 
   const merged = Array.from(map.values());
-  // Sort descending by timestamp
   merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   // Keep up to 2000 most recent logs
@@ -361,6 +360,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   let currency = site.currency || "CNY";
   const newLogs: StoredLog[] = [];
 
+  // 1. Balance Endpoint Candidates
   const balanceEndpoints: { url: string; token: string }[] = [];
 
   if (adminToken) {
@@ -368,25 +368,17 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
       { url: `${baseUrl}/api/user/wallet`, token: adminToken },
       { url: `${baseUrl}/api/user/self`, token: adminToken },
       { url: `${baseUrl}/api/user/dashboard`, token: adminToken },
-      { url: `${baseUrl}/api/wallet`, token: adminToken },
-      { url: `${baseUrl}/api/dashboard`, token: adminToken }
+      { url: `${baseUrl}/api/wallet`, token: adminToken }
     );
   }
 
-  balanceEndpoints.push(
-    { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
-    { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
-    { url: `${baseUrl}/api/usage/token/`, token: authToken },
-    { url: `${baseUrl}/api/usage/token`, token: authToken },
-    { url: `${baseUrl}/api/token/?p=0&size=10`, token: authToken },
-    { url: `${baseUrl}/api/token/`, token: authToken },
-    { url: `${baseUrl}/api/token/self`, token: authToken }
-  );
-
-  if (!adminToken) {
+  if (authToken) {
     balanceEndpoints.push(
-      { url: `${baseUrl}/api/user/wallet`, token: authToken },
-      { url: `${baseUrl}/api/user/self`, token: authToken }
+      { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
+      { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
+      { url: `${baseUrl}/api/token/?p=0&size=10`, token: authToken },
+      { url: `${baseUrl}/api/usage/token/`, token: authToken },
+      { url: `${baseUrl}/api/token/`, token: authToken }
     );
   }
 
@@ -414,20 +406,35 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     }
   }
 
-  // Multi-page log fetching (pulls up to 10 pages / 1000 records to cover 7d and 30d history)
-  const tokenToUseForLogs = adminToken || authToken;
-  const baseLogPaths = adminToken
-    ? ["/api/log?page_size=100", "/api/log/token?page_size=100"]
-    : ["/api/log/token?page_size=100", "/api/log/self?page_size=100", "/api/log?page_size=100"];
+  // 2. Intelligent Log Endpoint Candidates (strictly pairing tokens with appropriate endpoints)
+  const logCandidates: { path: string; token: string }[] = [];
 
-  for (const baseLogPath of baseLogPaths) {
-    let hasDataForPath = false;
+  if (adminToken) {
+    // User Access Token is for /api/log/self (User's personal call logs across all tokens)
+    logCandidates.push({ path: "/api/log/self", token: adminToken });
+  }
+
+  if (authToken) {
+    // API Key (sk-...) is for /api/log/token
+    logCandidates.push({ path: "/api/log/token", token: authToken });
+    logCandidates.push({ path: "/api/log/self", token: authToken });
+  }
+
+  if (adminToken) {
+    logCandidates.push({ path: "/api/log", token: adminToken });
+  }
+
+  for (const candidate of logCandidates) {
+    let candidateSuccessful = false;
 
     for (let page = 0; page < 10; page++) {
-      const pageUrl = `${baseUrl}${baseLogPath}&p=${page}`;
+      const pageUrl = `${baseUrl}${candidate.path}?page_size=100&p=${page}`;
       try {
-        const res = await proxyFetch(pageUrl, tokenToUseForLogs);
-        if (!res.ok) break;
+        const res = await proxyFetch(pageUrl, candidate.token);
+        // If not successful on page 0, skip this whole endpoint candidate immediately!
+        if (!res.ok) {
+          break;
+        }
 
         const json = await res.json();
         const rawItems = (Array.isArray(json)
@@ -443,7 +450,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
           : []) as Record<string, unknown>[];
 
         if (rawItems.length === 0) break;
-        hasDataForPath = true;
+        candidateSuccessful = true;
 
         for (const rawItem of rawItems) {
           newLogs.push({
@@ -458,14 +465,14 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
           });
         }
 
-        // If returned items is less than page_size, we reached the end of history
         if (rawItems.length < 100) break;
       } catch {
         break;
       }
     }
 
-    if (hasDataForPath && newLogs.length > 0) {
+    if (candidateSuccessful && newLogs.length > 0) {
+      console.log(`[AI Gateway Desk] Successfully fetched ${newLogs.length} logs via ${candidate.path}`);
       break;
     }
   }
@@ -559,7 +566,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       const tokenToUse = req.auth_token || tokens[id];
       const adminTokenToUse = req.admin_token || adminTokens[id];
 
-      if (tokenToUse) {
+      if (tokenToUse || adminTokenToUse) {
         const fetched = await fetchRealSiteDataInBrowser(newSite, tokenToUse, adminTokenToUse);
         if (fetched.balance !== undefined) {
           newSite.current_balance = fetched.balance;
@@ -595,7 +602,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       if (target) {
         const token = tokens[siteId];
         const adminToken = adminTokens[siteId];
-        if (token) {
+        if (token || adminToken) {
           const fetched = await fetchRealSiteDataInBrowser(target, token, adminToken);
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
@@ -617,7 +624,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       for (const target of sites) {
         const token = tokens[target.id];
         const adminToken = adminTokens[target.id];
-        if (token) {
+        if (token || adminToken) {
           const fetched = await fetchRealSiteDataInBrowser(target, token, adminToken);
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
