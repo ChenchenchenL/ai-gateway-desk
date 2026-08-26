@@ -36,18 +36,18 @@ impl NewApiAdapter {
         format!("{}{}", self.base_url, path)
     }
 
-    /// Converts New-API / One-API Quota points (500,000 = $1.00) to USD balance.
+    /// Converts New-API / One-API Quota points (500,000 = ¥1.00 / $1.00) to balance.
     fn convert_quota_to_balance(raw_quota: f64) -> f64 {
         if raw_quota > 500.0 {
-            (raw_quota / 500_000.0 * 100.0).round() / 100.0
+            (raw_quota / 500_000.0 * 10000.0).round() / 10000.0
         } else {
-            (raw_quota * 100.0).round() / 100.0
+            (raw_quota * 10000.0).round() / 10000.0
         }
     }
 
-    /// Extracts balance from various JSON responses.
-    fn extract_balance(json: &Value) -> Option<f64> {
-        // 1. Array of tokens (e.g. from /api/token/ or /api/token/?p=0&size=10)
+    /// Extracts balance and currency from various JSON responses.
+    fn extract_balance(json: &Value) -> Option<(f64, String)> {
+        // 1. Array of tokens
         let list = if let Some(arr) = json.as_array() {
             Some(arr)
         } else if let Some(arr) = json.get("data").and_then(|d| d.as_array()) {
@@ -63,23 +63,30 @@ impl NewApiAdapter {
         if let Some(items) = list {
             for item in items {
                 if let Some(true) = item.get("unlimited_quota").and_then(|v| v.as_bool()) {
-                    return Some(999999.0);
+                    return Some((999999.0, "CNY".to_string()));
                 }
                 let item_quota = item.get("remain_quota")
                     .or_else(|| item.get("quota"))
                     .or_else(|| item.get("balance"))
                     .and_then(|v| v.as_f64());
                 if let Some(q) = item_quota {
-                    return Some(Self::convert_quota_to_balance(q));
+                    let curr = item.get("currency").and_then(|c| c.as_str()).unwrap_or("CNY").to_string();
+                    return Some((Self::convert_quota_to_balance(q), curr));
                 }
             }
         }
 
-        // 2. Data object
+        // 2. Target object (Wallet / User profile)
         let target = json.get("data").unwrap_or(json);
         if let Some(true) = target.get("unlimited_quota").or_else(|| json.get("unlimited_quota")).and_then(|v| v.as_bool()) {
-            return Some(999999.0);
+            return Some((999999.0, "CNY".to_string()));
         }
+
+        let curr = target.get("currency")
+            .or_else(|| json.get("currency"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("CNY")
+            .to_string();
 
         let candidates = [
             target.get("remain_quota"),
@@ -94,7 +101,7 @@ impl NewApiAdapter {
 
         for val in candidates {
             if let Some(q) = val.and_then(|v| v.as_f64()) {
-                return Some(Self::convert_quota_to_balance(q));
+                return Some((Self::convert_quota_to_balance(q), curr));
             }
         }
 
@@ -107,7 +114,7 @@ impl NewApiAdapter {
         if let Some(limit) = hard_limit {
             let total_usage = json.get("total_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let raw_balance = (limit - total_usage).max(0.0);
-            return Some(Self::convert_quota_to_balance(raw_balance));
+            return Some((Self::convert_quota_to_balance(raw_balance), "USD".to_string()));
         }
 
         None
@@ -258,13 +265,16 @@ impl GatewayAdapter for NewApiAdapter {
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
         let token = self.token.clone();
         let endpoints = [
-            "/dashboard/billing/subscription",
-            "/v1/dashboard/billing/subscription",
+            "/api/user/wallet",
+            "/api/wallet",
+            "/api/user/dashboard",
+            "/api/dashboard",
+            "/api/user/self",
             "/api/usage/token",
             "/api/token/?p=0&size=10",
             "/api/token/",
-            "/api/token/self",
-            "/api/user/self",
+            "/dashboard/billing/subscription",
+            "/v1/dashboard/billing/subscription",
             "/api/user/info",
         ];
 
@@ -273,10 +283,10 @@ impl GatewayAdapter for NewApiAdapter {
             if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<Value>().await {
-                        if let Some(bal) = Self::extract_balance(&json) {
+                        if let Some((bal, curr)) = Self::extract_balance(&json) {
                             return Ok(BalanceInfo {
                                 balance: Some(bal),
-                                currency: "USD".to_string(),
+                                currency: curr,
                                 total_quota: None,
                                 expires_at: None,
                             });

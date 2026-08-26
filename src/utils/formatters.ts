@@ -12,10 +12,21 @@ export function formatTokens(tokens: number): string {
 }
 
 /**
- * Formats currency amounts with precision.
+ * Formats currency amounts with precision (supporting 4 decimals for small balances like ¥0.1491).
  */
 export function formatCurrency(amount: number, currency = "USD"): string {
-  const symbol = currency === "CNY" ? "¥" : "$";
+  const isCny =
+    currency.toUpperCase() === "CNY" ||
+    currency === "¥" ||
+    currency.toUpperCase() === "RMB";
+  const symbol = isCny ? "¥" : "$";
+
+  if (amount < 1 && amount > 0) {
+    const str = amount.toString();
+    if (str.includes(".") && str.split(".")[1].length > 2) {
+      return `${symbol}${amount.toFixed(4)}`;
+    }
+  }
   return `${symbol}${amount.toFixed(2)}`;
 }
 
