@@ -165,7 +165,6 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
     target.currency || obj.currency || (target.symbol === "¥" || obj.symbol === "¥" ? "CNY" : "CNY")
   );
 
-  // Direct wallet numeric fields
   if (typeof target.balance === "number") {
     return { balance: convertQuotaToBalance(target.balance), currency: detectedCurrency };
   }
@@ -197,7 +196,8 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
 }
 
 /**
- * Extracts prompt cache read tokens comprehensively across all New-API / One-API formats.
+ * Extracts prompt cache read tokens comprehensively across all New-API / One-API formats,
+ * including direct fields, "other" JSON string/object, "content", and nested usage details.
  */
 function extractCacheReadTokens(item: Record<string, unknown>): number {
   const directFields = [
@@ -217,6 +217,38 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
+  // Check "other" field (New-API stores cache_tokens in other JSON string/object)
+  if (item.other) {
+    if (typeof item.other === "object") {
+      const read = extractCacheReadTokens(item.other as Record<string, unknown>);
+      if (read > 0) return read;
+    } else if (typeof item.other === "string") {
+      try {
+        const parsed = JSON.parse(item.other);
+        const read = extractCacheReadTokens(parsed);
+        if (read > 0) return read;
+      } catch {
+        const match = item.other.match(/cache[_\w]*tokens["':\s]+(\d+)/i) ||
+                      item.other.match(/cached[_\w]*["':\s]+(\d+)/i);
+        if (match && match[1]) return Number(match[1]);
+      }
+    }
+  }
+
+  // Check "content" field
+  if (typeof item.content === "string" && item.content.includes("cache")) {
+    try {
+      const nested = JSON.parse(item.content);
+      const read = extractCacheReadTokens(nested);
+      if (read > 0) return read;
+    } catch {
+      const match = item.content.match(/cache[_\w]*tokens["':\s]+(\d+)/i) ||
+                    item.content.match(/cached[_\w]*["':\s]+(\d+)/i);
+      if (match && match[1]) return Number(match[1]);
+    }
+  }
+
+  // Nested prompt_tokens_details
   const details = (item.prompt_tokens_details || (item.usage as Record<string, unknown>)?.prompt_tokens_details) as Record<string, unknown> | undefined;
   if (details) {
     for (const f of directFields) {
@@ -228,6 +260,7 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
+  // Usage root
   const usage = item.usage as Record<string, unknown> | undefined;
   if (usage) {
     for (const f of directFields) {
@@ -235,18 +268,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
       if (v !== undefined && v !== null) {
         const num = Number(v);
         if (!isNaN(num) && num > 0) return num;
-      }
-    }
-  }
-
-  if (typeof item.content === "string" && item.content.includes("cache")) {
-    try {
-      const nested = JSON.parse(item.content);
-      return extractCacheReadTokens(nested);
-    } catch {
-      const match = item.content.match(/cache[_\w]*tokens["':\s]+(\d+)/i) || item.content.match(/cached[_\w]*["':\s]+(\d+)/i);
-      if (match && match[1]) {
-        return Number(match[1]);
       }
     }
   }
@@ -270,6 +291,22 @@ function extractCacheWriteTokens(item: Record<string, unknown>): number {
       if (!isNaN(num) && num > 0) return num;
     }
   }
+
+  if (item.other) {
+    if (typeof item.other === "object") {
+      const write = extractCacheWriteTokens(item.other as Record<string, unknown>);
+      if (write > 0) return write;
+    } else if (typeof item.other === "string") {
+      try {
+        const parsed = JSON.parse(item.other);
+        const write = extractCacheWriteTokens(parsed);
+        if (write > 0) return write;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   return 0;
 }
 
@@ -308,10 +345,8 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   let currency = site.currency || "CNY";
   const newLogs: StoredLog[] = [];
 
-  // Build endpoint candidates based on available tokens
   const balanceEndpoints: { url: string; token: string }[] = [];
 
-  // 1. If admin token exists, query user wallet & user profile endpoints
   if (adminToken) {
     balanceEndpoints.push(
       { url: `${baseUrl}/api/user/wallet`, token: adminToken },
@@ -322,7 +357,6 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     );
   }
 
-  // 2. Standard token / sk-... endpoints
   balanceEndpoints.push(
     { url: `${baseUrl}/dashboard/billing/subscription`, token: authToken },
     { url: `${baseUrl}/v1/dashboard/billing/subscription`, token: authToken },
@@ -333,7 +367,6 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     { url: `${baseUrl}/api/token/self`, token: authToken }
   );
 
-  // If no admin token, still try user wallet with authToken as fallback
   if (!adminToken) {
     balanceEndpoints.push(
       { url: `${baseUrl}/api/user/wallet`, token: authToken },
@@ -361,24 +394,32 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
         }
       }
     } catch {
-      // ignore individual failures
+      // ignore
     }
   }
 
-  // 3. Query Real Usage Logs
-  const logEndpoints = [
-    `${baseUrl}/api/log/token?p=0&page_size=100`,
-    `${baseUrl}/api/log/self?p=0&page_size=100`,
-    `${baseUrl}/api/log?p=0&page_size=100`,
-    `${baseUrl}/api/log`,
-  ];
+  // Query Real Usage Logs using adminToken if present, else authToken
+  const logEndpoints: { url: string; token: string }[] = [];
+  if (adminToken) {
+    logEndpoints.push(
+      { url: `${baseUrl}/api/log/token?p=0&page_size=100`, token: adminToken },
+      { url: `${baseUrl}/api/log/self?p=0&page_size=100`, token: adminToken },
+      { url: `${baseUrl}/api/log?p=0&page_size=100`, token: adminToken }
+    );
+  }
+  logEndpoints.push(
+    { url: `${baseUrl}/api/log/token?p=0&page_size=100`, token: authToken },
+    { url: `${baseUrl}/api/log/self?p=0&page_size=100`, token: authToken },
+    { url: `${baseUrl}/api/log?p=0&page_size=100`, token: authToken },
+    { url: `${baseUrl}/api/log`, token: authToken }
+  );
 
-  for (const url of logEndpoints) {
+  for (const item of logEndpoints) {
     try {
-      const res = await proxyFetch(url, authToken);
+      const res = await proxyFetch(item.url, item.token);
       if (res.ok) {
         const json = await res.json();
-        console.log(`[AI Gateway Desk] Usage logs raw response from ${url}:`, json);
+        console.log(`[AI Gateway Desk] Usage logs raw response from ${item.url}:`, json);
 
         const rawItems = (Array.isArray(json)
           ? json
@@ -393,23 +434,23 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
           : []) as Record<string, unknown>[];
 
         if (rawItems.length > 0) {
-          for (const item of rawItems) {
+          for (const rawItem of rawItems) {
             newLogs.push({
-              id: String(item.id || item.record_id || Math.random().toString(36).slice(2)),
+              id: String(rawItem.id || rawItem.record_id || Math.random().toString(36).slice(2)),
               site_id: site.id,
-              timestamp: parseLogTimestamp(item.created_at ?? item.timestamp ?? item.time ?? item.created),
-              model_name: String(item.model_name ?? item.model ?? "unknown"),
-              input_tokens: Number(item.prompt_tokens ?? item.input_tokens ?? item.prompt ?? 0),
-              output_tokens: Number(item.completion_tokens ?? item.output_tokens ?? item.completion ?? 0),
-              cache_read_tokens: extractCacheReadTokens(item),
-              cache_write_tokens: extractCacheWriteTokens(item),
+              timestamp: parseLogTimestamp(rawItem.created_at ?? rawItem.timestamp ?? rawItem.time ?? rawItem.created),
+              model_name: String(rawItem.model_name ?? rawItem.model ?? "unknown"),
+              input_tokens: Number(rawItem.prompt_tokens ?? rawItem.input_tokens ?? rawItem.prompt ?? 0),
+              output_tokens: Number(rawItem.completion_tokens ?? rawItem.output_tokens ?? rawItem.completion ?? 0),
+              cache_read_tokens: extractCacheReadTokens(rawItem),
+              cache_write_tokens: extractCacheWriteTokens(rawItem),
             });
           }
           break;
         }
       }
     } catch (err) {
-      console.warn(`[AI Gateway Desk] Logs query failed on ${url}:`, err);
+      console.warn(`[AI Gateway Desk] Logs query failed on ${item.url}:`, err);
     }
   }
 
@@ -442,7 +483,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
     case "test_connection": {
       const req = (args?.req || {}) as TestConnectionRequest;
       const baseUrl = req.base_url?.replace(/\/+$/, "");
-      const token = req.auth_token;
+      const token = req.admin_token || req.auth_token;
 
       let balanceSupported = false;
       let logsSupported = false;
@@ -450,7 +491,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const res = await proxyFetch(`${baseUrl}/dashboard/billing/subscription`, token);
+          const res = await proxyFetch(`${baseUrl}/api/user/wallet`, token);
           if (res.ok) balanceSupported = true;
         } catch {
           // ignore

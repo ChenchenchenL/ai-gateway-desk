@@ -169,7 +169,8 @@ impl NewApiAdapter {
         Vec::new()
     }
 
-    /// Recursively extracts cache read tokens from various New-API log field conventions.
+    /// Recursively extracts cache read tokens from various New-API log field conventions,
+    /// including direct fields, "other" JSON string/object, "content", and nested usage details.
     fn extract_cache_read_tokens(item: &Value) -> u64 {
         let direct_fields = [
             "cache_tokens",
@@ -193,6 +194,42 @@ impl NewApiAdapter {
             }
         }
 
+        // Check "other" field (New-API stores cache_tokens in other JSON string/object)
+        if let Some(other_val) = item.get("other") {
+            if let Some(other_obj) = other_val.as_object() {
+                for key in direct_fields {
+                    if let Some(v) = other_obj.get(key) {
+                        if let Some(n) = v.as_u64() {
+                            if n > 0 { return n; }
+                        }
+                        if let Some(s) = v.as_str() {
+                            if let Ok(n) = s.parse::<u64>() {
+                                if n > 0 { return n; }
+                            }
+                        }
+                    }
+                }
+            } else if let Some(other_str) = other_val.as_str() {
+                if other_str.contains("cache") {
+                    if let Ok(nested_json) = serde_json::from_str::<Value>(other_str) {
+                        let nested_read = Self::extract_cache_read_tokens(&nested_json);
+                        if nested_read > 0 { return nested_read; }
+                    }
+                }
+            }
+        }
+
+        // Check "content" field
+        if let Some(content_str) = item.get("content").and_then(|c| c.as_str()) {
+            if content_str.contains("cache") {
+                if let Ok(nested_json) = serde_json::from_str::<Value>(content_str) {
+                    let nested_read = Self::extract_cache_read_tokens(&nested_json);
+                    if nested_read > 0 { return nested_read; }
+                }
+            }
+        }
+
+        // Check prompt_tokens_details or usage
         if let Some(details) = item.get("prompt_tokens_details").or_else(|| item.get("usage").and_then(|u| u.get("prompt_tokens_details"))) {
             for key in direct_fields {
                 if let Some(v) = details.get(key) {
@@ -213,15 +250,6 @@ impl NewApiAdapter {
             }
         }
 
-        if let Some(content_str) = item.get("content").and_then(|c| c.as_str()) {
-            if content_str.contains("cache") {
-                if let Ok(nested_json) = serde_json::from_str::<Value>(content_str) {
-                    let nested_read = Self::extract_cache_read_tokens(&nested_json);
-                    if nested_read > 0 { return nested_read; }
-                }
-            }
-        }
-
         0
     }
 
@@ -237,6 +265,23 @@ impl NewApiAdapter {
             if let Some(v) = item.get(key) {
                 if let Some(n) = v.as_u64() {
                     if n > 0 { return n; }
+                }
+            }
+        }
+
+        if let Some(other_val) = item.get("other") {
+            if let Some(other_obj) = other_val.as_object() {
+                for key in direct_fields {
+                    if let Some(v) = other_obj.get(key) {
+                        if let Some(n) = v.as_u64() {
+                            if n > 0 { return n; }
+                        }
+                    }
+                }
+            } else if let Some(other_str) = other_val.as_str() {
+                if let Ok(nested_json) = serde_json::from_str::<Value>(other_str) {
+                    let nested_write = Self::extract_cache_write_tokens(&nested_json);
+                    if nested_write > 0 { return nested_write; }
                 }
             }
         }
