@@ -1,10 +1,14 @@
 //! Window control Tauri commands
+//!
+//! In Tauri 2.0 binary crates, `generate_handler!` cannot expand generic commands.
+//! All commands must use concrete `AppHandle` (resolves to `AppHandle<Wry>`) without
+//! explicit `<R: Runtime>` type parameter.
 
-use tauri::{command, AppHandle, Manager, Runtime};
+use tauri::{command, AppHandle, Manager};
 
 /// Sets whether the main window stays always on top.
 #[command]
-pub async fn set_always_on_top<R: Runtime>(app: AppHandle<R>, always_on_top: bool) -> Result<(), String> {
+pub async fn set_always_on_top(app: AppHandle, always_on_top: bool) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.set_always_on_top(always_on_top).map_err(|e| e.to_string())?;
     }
@@ -13,7 +17,7 @@ pub async fn set_always_on_top<R: Runtime>(app: AppHandle<R>, always_on_top: boo
 
 /// Hides the main window to the system tray.
 #[command]
-pub async fn hide_to_tray<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn hide_to_tray(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.hide().map_err(|e| e.to_string())?;
     }
@@ -22,7 +26,7 @@ pub async fn hide_to_tray<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 /// Shows and focuses the main window.
 #[command]
-pub async fn show_window<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn show_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
