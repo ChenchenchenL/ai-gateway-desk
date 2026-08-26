@@ -91,9 +91,27 @@ function getStoredLogs(siteId: string): StoredLog[] {
   }
 }
 
-function saveStoredLogs(siteId: string, logs: StoredLog[]) {
+function saveStoredLogs(siteId: string, incomingLogs: StoredLog[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_LOGS_PREFIX + siteId, JSON.stringify(logs));
+  const existing = getStoredLogs(siteId);
+  const map = new Map<string, StoredLog>();
+
+  // Index existing
+  for (const log of existing) {
+    map.set(log.id, log);
+  }
+  // Merge incoming
+  for (const log of incomingLogs) {
+    map.set(log.id, log);
+  }
+
+  const merged = Array.from(map.values());
+  // Sort descending by timestamp
+  merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Keep up to 2000 most recent logs
+  const trimmed = merged.slice(0, 2000);
+  localStorage.setItem(STORAGE_LOGS_PREFIX + siteId, JSON.stringify(trimmed));
 }
 
 function parseLogTimestamp(val: unknown): string {
@@ -105,6 +123,10 @@ function parseLogTimestamp(val: unknown): string {
     return new Date(val * 1000).toISOString();
   }
   if (typeof val === "string") {
+    const num = Number(val);
+    if (!isNaN(num) && num > 0) {
+      return parseLogTimestamp(num);
+    }
     const d = new Date(val);
     if (!isNaN(d.getTime())) return d.toISOString();
   }
@@ -128,7 +150,6 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   if (!json || typeof json !== "object") return {};
   const obj = json as Record<string, unknown>;
 
-  // 1. Array of tokens (from /api/token/ or /api/token/?p=0&size=10)
   const list = (Array.isArray(json)
     ? json
     : Array.isArray(obj.data)
@@ -154,7 +175,6 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
     }
   }
 
-  // 2. Target data object (Wallet / User profile)
   const target = (obj.data && typeof obj.data === "object" ? obj.data : obj) as Record<string, unknown>;
 
   if (target.unlimited_quota === true || obj.unlimited_quota === true) {
@@ -185,7 +205,6 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
     }
   }
 
-  // 3. OpenAI Billing subscription format
   const hardLimit = (obj.hard_limit_usd ?? obj.system_hard_limit_usd ?? obj.total_available) as number | undefined;
   if (typeof hardLimit === "number" && hardLimit > 0) {
     const totalUsage = typeof obj.total_usage === "number" ? obj.total_usage : 0;
@@ -196,8 +215,7 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
 }
 
 /**
- * Extracts prompt cache read tokens comprehensively across all New-API / One-API formats,
- * including direct fields, "other" JSON string/object, "content", and nested usage details.
+ * Extracts prompt cache read tokens comprehensively.
  */
 function extractCacheReadTokens(item: Record<string, unknown>): number {
   const directFields = [
@@ -217,7 +235,7 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Check "other" field (New-API stores cache_tokens in other JSON string/object)
+  // Check "other" field
   if (item.other) {
     if (typeof item.other === "object") {
       const read = extractCacheReadTokens(item.other as Record<string, unknown>);
@@ -248,7 +266,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Nested prompt_tokens_details
   const details = (item.prompt_tokens_details || (item.usage as Record<string, unknown>)?.prompt_tokens_details) as Record<string, unknown> | undefined;
   if (details) {
     for (const f of directFields) {
@@ -260,7 +277,6 @@ function extractCacheReadTokens(item: Record<string, unknown>): number {
     }
   }
 
-  // Usage root
   const usage = item.usage as Record<string, unknown> | undefined;
   if (usage) {
     for (const f of directFields) {
@@ -332,7 +348,7 @@ async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
 }
 
 /**
- * Real in-browser fetch querying balance and logs directly from upstream gateway.
+ * Real in-browser fetch querying balance and multi-page logs from upstream gateway.
  */
 async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminToken?: string): Promise<{
   balance?: number;
@@ -398,29 +414,22 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     }
   }
 
-  // Query Real Usage Logs using adminToken if present, else authToken
-  const logEndpoints: { url: string; token: string }[] = [];
-  if (adminToken) {
-    logEndpoints.push(
-      { url: `${baseUrl}/api/log/token?p=0&page_size=100`, token: adminToken },
-      { url: `${baseUrl}/api/log/self?p=0&page_size=100`, token: adminToken },
-      { url: `${baseUrl}/api/log?p=0&page_size=100`, token: adminToken }
-    );
-  }
-  logEndpoints.push(
-    { url: `${baseUrl}/api/log/token?p=0&page_size=100`, token: authToken },
-    { url: `${baseUrl}/api/log/self?p=0&page_size=100`, token: authToken },
-    { url: `${baseUrl}/api/log?p=0&page_size=100`, token: authToken },
-    { url: `${baseUrl}/api/log`, token: authToken }
-  );
+  // Multi-page log fetching (pulls up to 10 pages / 1000 records to cover 7d and 30d history)
+  const tokenToUseForLogs = adminToken || authToken;
+  const baseLogPaths = adminToken
+    ? ["/api/log?page_size=100", "/api/log/token?page_size=100"]
+    : ["/api/log/token?page_size=100", "/api/log/self?page_size=100", "/api/log?page_size=100"];
 
-  for (const item of logEndpoints) {
-    try {
-      const res = await proxyFetch(item.url, item.token);
-      if (res.ok) {
+  for (const baseLogPath of baseLogPaths) {
+    let hasDataForPath = false;
+
+    for (let page = 0; page < 10; page++) {
+      const pageUrl = `${baseUrl}${baseLogPath}&p=${page}`;
+      try {
+        const res = await proxyFetch(pageUrl, tokenToUseForLogs);
+        if (!res.ok) break;
+
         const json = await res.json();
-        console.log(`[AI Gateway Desk] Usage logs raw response from ${item.url}:`, json);
-
         const rawItems = (Array.isArray(json)
           ? json
           : Array.isArray(json?.data)
@@ -433,24 +442,31 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
           ? json.data.rows
           : []) as Record<string, unknown>[];
 
-        if (rawItems.length > 0) {
-          for (const rawItem of rawItems) {
-            newLogs.push({
-              id: String(rawItem.id || rawItem.record_id || Math.random().toString(36).slice(2)),
-              site_id: site.id,
-              timestamp: parseLogTimestamp(rawItem.created_at ?? rawItem.timestamp ?? rawItem.time ?? rawItem.created),
-              model_name: String(rawItem.model_name ?? rawItem.model ?? "unknown"),
-              input_tokens: Number(rawItem.prompt_tokens ?? rawItem.input_tokens ?? rawItem.prompt ?? 0),
-              output_tokens: Number(rawItem.completion_tokens ?? rawItem.output_tokens ?? rawItem.completion ?? 0),
-              cache_read_tokens: extractCacheReadTokens(rawItem),
-              cache_write_tokens: extractCacheWriteTokens(rawItem),
-            });
-          }
-          break;
+        if (rawItems.length === 0) break;
+        hasDataForPath = true;
+
+        for (const rawItem of rawItems) {
+          newLogs.push({
+            id: String(rawItem.id || rawItem.record_id || `${rawItem.created_at}_${Math.random().toString(36).slice(2)}`),
+            site_id: site.id,
+            timestamp: parseLogTimestamp(rawItem.created_at ?? rawItem.timestamp ?? rawItem.time ?? rawItem.created),
+            model_name: String(rawItem.model_name ?? rawItem.model ?? "unknown"),
+            input_tokens: Number(rawItem.prompt_tokens ?? rawItem.input_tokens ?? rawItem.prompt ?? 0),
+            output_tokens: Number(rawItem.completion_tokens ?? rawItem.output_tokens ?? rawItem.completion ?? 0),
+            cache_read_tokens: extractCacheReadTokens(rawItem),
+            cache_write_tokens: extractCacheWriteTokens(rawItem),
+          });
         }
+
+        // If returned items is less than page_size, we reached the end of history
+        if (rawItems.length < 100) break;
+      } catch {
+        break;
       }
-    } catch (err) {
-      console.warn(`[AI Gateway Desk] Logs query failed on ${item.url}:`, err);
+    }
+
+    if (hasDataForPath && newLogs.length > 0) {
+      break;
     }
   }
 
