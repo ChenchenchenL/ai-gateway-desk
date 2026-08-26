@@ -126,7 +126,7 @@ export const SiteDetailModal: React.FC<SiteDetailModalProps> = ({
               <span className="text-lg font-bold text-slate-100">
                 {site.current_balance !== undefined && site.current_balance !== null
                   ? formatCurrency(site.current_balance, site.currency)
-                  : site.capabilities.balance
+                  : site.capabilities?.balance
                   ? "未同步"
                   : "不支持"}
               </span>
@@ -140,7 +140,7 @@ export const SiteDetailModal: React.FC<SiteDetailModalProps> = ({
               <span className="text-lg font-bold text-slate-100">
                 {site.window_remaining_quota !== undefined && site.window_remaining_quota !== null
                   ? `${site.window_remaining_quota} 剩余`
-                  : site.capabilities.window_quota
+                  : site.capabilities?.window_quota
                   ? "未提供"
                   : "无窗口限制"}
               </span>

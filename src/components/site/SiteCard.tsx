@@ -43,13 +43,13 @@ export const SiteCard: React.FC<SiteCardProps> = ({ site, onSelect }) => {
           <span className="text-sm font-bold text-slate-100">
             {site.current_balance !== undefined && site.current_balance !== null
               ? formatCurrency(site.current_balance, site.currency)
-              : site.capabilities.balance
+              : site.capabilities?.balance
               ? "--"
               : "不支持"}
           </span>
         </div>
 
-        {site.capabilities.window_quota && (
+        {site.capabilities?.window_quota && (
           <div className="flex flex-col items-end">
             <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
               <Hourglass className="w-2.5 h-2.5 text-blue-400" />

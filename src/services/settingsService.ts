@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke } from "./tauriClient";
 import { AppSettings } from "../types";
 
 /**
@@ -6,14 +6,14 @@ import { AppSettings } from "../types";
  */
 export const settingsService = {
   async getSettings(): Promise<AppSettings> {
-    return await invoke<AppSettings>("get_settings");
+    return await safeInvoke<AppSettings>("get_settings");
   },
 
   async saveSettings(settings: AppSettings): Promise<void> {
-    await invoke<void>("save_settings", { settings });
+    await safeInvoke<void>("save_settings", { settings });
   },
 
   async clearCache(): Promise<void> {
-    await invoke<void>("clear_cache");
+    await safeInvoke<void>("clear_cache");
   },
 };

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke } from "./tauriClient";
 import { AggregatedMetrics, ModelUsageMetrics } from "../types";
 
 /**
@@ -10,7 +10,7 @@ export const statsService = {
     startIso: string,
     endIso: string
   ): Promise<AggregatedMetrics> {
-    return await invoke<AggregatedMetrics>("get_site_stats", {
+    return await safeInvoke<AggregatedMetrics>("get_site_stats", {
       siteId,
       startIso,
       endIso,
@@ -22,7 +22,7 @@ export const statsService = {
     startIso: string,
     endIso: string
   ): Promise<ModelUsageMetrics[]> {
-    return await invoke<ModelUsageMetrics[]>("get_models_breakdown", {
+    return await safeInvoke<ModelUsageMetrics[]>("get_models_breakdown", {
       siteId,
       startIso,
       endIso,

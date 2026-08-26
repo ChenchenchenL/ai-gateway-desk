@@ -27,9 +27,11 @@ export function useSiteStats(siteId?: string, preset: TimeRangePreset = "24h") {
       ]);
 
       setMetrics(metricsData);
-      setModels(modelsData);
+      setModels(Array.isArray(modelsData) ? modelsData : []);
     } catch (err) {
       setError(formatErrorMessage(err));
+      setMetrics(null);
+      setModels([]);
     } finally {
       setLoading(false);
     }

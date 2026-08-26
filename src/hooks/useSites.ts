@@ -16,9 +16,10 @@ export function useSites() {
     setError(null);
     try {
       const data = await siteService.listSites();
-      setSites(data);
+      setSites(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(formatErrorMessage(err));
+      setSites([]);
     } finally {
       setLoading(false);
     }

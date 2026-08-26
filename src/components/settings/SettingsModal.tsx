@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { AppSettings } from "../../types";
-import { X, Bell, RefreshCw, Trash2, Check } from "lucide-react";
+import { X, Bell, RefreshCw, Trash2, Check, Eye } from "lucide-react";
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -46,7 +46,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-3.5 text-xs">
+        <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-3 text-xs">
           {/* Auto Refresh setting */}
           <div className="flex flex-col gap-1.5 p-2.5 bg-slate-950/60 border border-slate-800 rounded-lg">
             <div className="flex items-center justify-between">
@@ -77,6 +77,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </select>
               </div>
             )}
+          </div>
+
+          {/* Opacity Setting */}
+          <div className="flex flex-col gap-1.5 p-2.5 bg-slate-950/60 border border-slate-800 rounded-lg">
+            <div className="flex items-center justify-between font-medium text-slate-200">
+              <div className="flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-sky-400" />
+                <span>窗口透明度</span>
+              </div>
+              <span className="text-slate-300 font-mono">{form.opacity_pct ?? 100}%</span>
+            </div>
+            <input
+              type="range"
+              min="40"
+              max="100"
+              step="5"
+              value={form.opacity_pct ?? 100}
+              onChange={(e) => setForm({ ...form, opacity_pct: Number(e.target.value) })}
+              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            />
           </div>
 
           {/* Alert setting */}

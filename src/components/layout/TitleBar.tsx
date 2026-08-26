@@ -1,10 +1,12 @@
 import React from "react";
-import { Pin, Minus, X, RefreshCw, Settings as SettingsIcon } from "lucide-react";
+import { Pin, Minus, X, RefreshCw, Settings as SettingsIcon, ChevronUp, ChevronDown } from "lucide-react";
 import { windowService } from "../../services/windowService";
 
 interface TitleBarProps {
   alwaysOnTop: boolean;
+  collapsed: boolean;
   onTogglePin: () => void;
+  onToggleCollapse: () => void;
   onRefreshAll: () => void;
   onOpenSettings: () => void;
   refreshing: boolean;
@@ -15,7 +17,9 @@ interface TitleBarProps {
  */
 export const TitleBar: React.FC<TitleBarProps> = ({
   alwaysOnTop,
+  collapsed,
   onTogglePin,
+  onToggleCollapse,
   onRefreshAll,
   onOpenSettings,
   refreshing,
@@ -33,6 +37,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({
       </div>
 
       <div className="flex items-center gap-1">
+        <button
+          onClick={onToggleCollapse}
+          title={collapsed ? "展开小窗" : "收起为极简挂件"}
+          className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition"
+        >
+          {collapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+        </button>
+
         <button
           onClick={onRefreshAll}
           disabled={refreshing}
