@@ -142,7 +142,7 @@ function convertQuotaToBalance(rawQuota: number): number {
 /**
  * Extracts balance and currency from all common OneAPI / NewAPI / Sub2API responses.
  */
-function extractBalanceFromJson(json: unknown): { balance?: number; currency?: string; isUnlimited?: boolean } {
+function extractBalanceFromJson(json: unknown, defaultCurrency = "USD"): { balance?: number; currency?: string; isUnlimited?: boolean } {
   if (!json || typeof json !== "object") return {};
   const obj = json as Record<string, unknown>;
 
@@ -159,13 +159,13 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   if (list.length > 0) {
     for (const item of list) {
       if (item?.unlimited_quota === true) {
-        return { isUnlimited: true, currency: "CNY" };
+        return { isUnlimited: true, currency: defaultCurrency };
       }
       const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
       if (typeof itemQuota === "number") {
         return {
           balance: convertQuotaToBalance(itemQuota),
-          currency: String(item?.currency || "CNY"),
+          currency: String(item?.currency || defaultCurrency),
         };
       }
     }
@@ -174,12 +174,18 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
   const target = (obj.data && typeof obj.data === "object" ? obj.data : obj) as Record<string, unknown>;
 
   if (target.unlimited_quota === true || obj.unlimited_quota === true) {
-    return { isUnlimited: true, currency: "CNY" };
+    return { isUnlimited: true, currency: defaultCurrency };
   }
 
   const detectedCurrency = String(
-    target.currency || obj.currency || (target.symbol === "¥" || obj.symbol === "¥" ? "CNY" : "CNY")
+    target.currency || obj.currency || (target.symbol === "¥" || obj.symbol === "¥" ? "CNY" : (target.symbol === "$" || obj.symbol === "$" ? "USD" : defaultCurrency))
   );
+
+  // Sub2API user profile object { user: { balance: 0 } }
+  const userObj = (target.user || target.account) as Record<string, unknown> | undefined;
+  if (userObj && typeof userObj.balance === "number") {
+    return { balance: userObj.balance, currency: detectedCurrency };
+  }
 
   if (typeof target.balance === "number") {
     return { balance: convertQuotaToBalance(target.balance), currency: detectedCurrency };
@@ -189,6 +195,7 @@ function extractBalanceFromJson(json: unknown): { balance?: number; currency?: s
     target.remain_quota,
     target.quota,
     target.current_balance,
+    target.remaining_quota,
     target.total_quota,
     obj.remain_quota,
     obj.quota,
@@ -354,7 +361,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
 }> {
   const baseUrl = site.base_url.replace(/\/+$/, "");
   let balance: number | undefined = undefined;
-  let currency = site.currency || "CNY";
+  let currency = site.currency || (site.provider === "sub2_api" ? "USD" : "CNY");
   let windowRemainingQuota: number | undefined = undefined;
   let windowResetAt: string | undefined = undefined;
   const newLogs: StoredLog[] = [];
@@ -367,9 +374,11 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     balanceEndpoints.push(
       { url: `${baseUrl}/v1/sub2api/billing`, token },
       { url: `${baseUrl}/api/v1/auth/me`, token: adminToken || token },
+      { url: `${baseUrl}/api/v1/user`, token: adminToken || token },
+      { url: `${baseUrl}/api/v1/subscriptions`, token: adminToken || token },
+      { url: `${baseUrl}/api/v1/keys`, token: adminToken || token },
       { url: `${baseUrl}/api/user/info`, token },
-      { url: `${baseUrl}/api/user/profile`, token },
-      { url: `${baseUrl}/api/user`, token }
+      { url: `${baseUrl}/api/user/profile`, token }
     );
   } else {
     if (adminToken) {
@@ -398,10 +407,10 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
         const json = await res.json();
         console.log(`[AI Gateway Desk] Balance success from ${item.url}:`, json);
 
-        const extracted = extractBalanceFromJson(json);
+        const extracted = extractBalanceFromJson(json, site.provider === "sub2_api" ? "USD" : "CNY");
         if (extracted.isUnlimited) {
           balance = 999999;
-          currency = extracted.currency || "CNY";
+          currency = extracted.currency || currency;
           break;
         }
         if (extracted.balance !== undefined) {
@@ -420,6 +429,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     const token = authToken || adminToken || "";
     const windowEndpoints = [
       `${baseUrl}/v1/sub2api/billing`,
+      `${baseUrl}/api/v1/subscriptions`,
       `${baseUrl}/api/window`,
       `${baseUrl}/api/v1/window`,
       `${baseUrl}/api/user/window`,
@@ -451,9 +461,11 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   const logCandidates: { path: string; token: string }[] = [];
 
   if (site.provider === "sub2_api") {
-    const token = adminToken || authToken;
+    const token = adminToken || authToken || "";
     logCandidates.push(
       { path: "/api/v1/usage", token },
+      { path: "/api/v1/usage?page_size=100", token },
+      { path: "/api/v1/logs", token },
       { path: "/api/log", token },
       { path: "/api/v1/log", token },
       { path: "/api/log/self", token },
@@ -466,7 +478,6 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     if (authToken) {
       logCandidates.push({ path: "/api/log/token", token: authToken });
       logCandidates.push({ path: "/api/log/self", token: authToken });
-      logCandidates.push({ path: "/api/v1/usage", token: authToken });
     }
   }
 
@@ -474,7 +485,7 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
     let candidateSuccessful = false;
 
     for (let page = 0; page < 10; page++) {
-      const pageUrl = `${baseUrl}${candidate.path}?page_size=100&p=${page}`;
+      const pageUrl = `${baseUrl}${candidate.path}${candidate.path.includes("?") ? "&" : "?"}page_size=100&p=${page}`;
       try {
         const res = await proxyFetch(pageUrl, candidate.token);
         if (!res.ok) {
@@ -565,7 +576,9 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
       if (baseUrl && token) {
         try {
-          const testPath = req.provider === "sub2_api" ? `${baseUrl}/v1/sub2api/billing` : `${baseUrl}/api/user/self`;
+          const testPath = req.provider === "sub2_api"
+            ? `${baseUrl}/v1/sub2api/billing`
+            : `${baseUrl}/api/user/self`;
           const res = await proxyFetch(testPath, token);
           if (res.ok) balanceSupported = true;
         } catch {
@@ -608,7 +621,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
           window_quota: req.provider === "sub2_api",
         },
         current_balance: existing?.current_balance,
-        currency: existing?.currency || "CNY",
+        currency: existing?.currency || (req.provider === "sub2_api" ? "USD" : "CNY"),
         window_remaining_quota: existing?.window_remaining_quota,
         window_reset_at: existing?.window_reset_at,
         last_success_at: existing?.last_success_at,
@@ -623,7 +636,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
         const fetched = await fetchRealSiteDataInBrowser(newSite, tokenToUse, adminTokenToUse);
         if (fetched.balance !== undefined) {
           newSite.current_balance = fetched.balance;
-          newSite.currency = fetched.currency || "CNY";
+          newSite.currency = fetched.currency || newSite.currency;
         }
         if (fetched.window_remaining_quota !== undefined) {
           newSite.window_remaining_quota = fetched.window_remaining_quota;
@@ -665,7 +678,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
           const fetched = await fetchRealSiteDataInBrowser(target, token, adminToken);
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
-            target.currency = fetched.currency || "CNY";
+            target.currency = fetched.currency || target.currency;
           }
           if (fetched.window_remaining_quota !== undefined) {
             target.window_remaining_quota = fetched.window_remaining_quota;
@@ -693,7 +706,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
           const fetched = await fetchRealSiteDataInBrowser(target, token, adminToken);
           if (fetched.balance !== undefined) {
             target.current_balance = fetched.balance;
-            target.currency = fetched.currency || "CNY";
+            target.currency = fetched.currency || target.currency;
           }
           if (fetched.window_remaining_quota !== undefined) {
             target.window_remaining_quota = fetched.window_remaining_quota;
