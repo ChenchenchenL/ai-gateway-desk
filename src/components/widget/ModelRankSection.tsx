@@ -22,9 +22,9 @@ export const ModelRankSection: React.FC<ModelRankSectionProps> = ({ models }) =>
   return (
     <div className="flex flex-col gap-1.5 flex-1 min-h-0">
       {/* Header Row */}
-      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-1">
+      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 px-1">
         <span>模型调用排行</span>
-        <span className="text-[10px] text-slate-500">消耗 (In / Out / Cache)</span>
+        <span className="text-[10px] text-slate-500 font-medium">消耗 (In / Out / Cache)</span>
       </div>
 
       {/* Scrollable Model Items */}

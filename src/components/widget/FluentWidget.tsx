@@ -107,10 +107,10 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
           {/* Subtle Glass Footer */}
           <div
             data-tauri-drag-region
-            className="flex items-center justify-between pt-1 border-t border-white/[0.06] text-[10px] text-slate-400 select-none cursor-move shrink-0"
+            className="flex items-center justify-between pt-1 border-t border-black/[0.08] text-[10px] text-slate-600 font-medium select-none cursor-move shrink-0"
           >
             <div className="flex items-center gap-1">
-              <Clock className="w-3 h-3 text-slate-400" />
+              <Clock className="w-3 h-3 text-slate-500" />
               <span>
                 最后同步：
                 {currentSite?.last_success_at
@@ -118,7 +118,7 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
                   : "待同步"}
               </span>
             </div>
-            <span className="truncate max-w-[140px] text-slate-400">
+            <span className="truncate max-w-[140px] text-slate-500">
               {currentSite?.base_url?.replace(/^https?:\/\//, "")}
             </span>
           </div>

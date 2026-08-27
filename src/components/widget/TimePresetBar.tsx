@@ -22,8 +22,8 @@ export const TimePresetBar: React.FC<TimePresetBarProps> = ({
 }) => {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[11px] font-medium text-slate-400">统计周期</span>
-      <div className="flex items-center gap-1 p-0.5 rounded-lg bg-black/25 border border-white/[0.06] backdrop-blur-md">
+      <span className="text-[11px] font-semibold text-slate-700">统计周期</span>
+      <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-900/60 border border-white/10 backdrop-blur-md">
         {PRESETS.map((p) => {
           const isActive = preset === p.value;
           return (
