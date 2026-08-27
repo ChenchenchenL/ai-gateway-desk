@@ -362,13 +362,14 @@ impl GatewayAdapter for NewApiAdapter {
 
         for path in &endpoints {
             let url = self.build_url(path);
-            let tok = token.clone();
-            // Try with Bearer prefix first, then raw token (some New-API versions accept both)
-            for auth_value in &[format!("Bearer {}", tok), tok.clone()] {
-                let auth = auth_value.clone();
+            let auth_bearer = format!("Bearer {}", token);
+            let auth_variants = [auth_bearer, token.clone()];
+            for auth in &auth_variants {
+                let req_url = url.clone();
+                let req_auth = auth.clone();
                 if let Ok(resp) = self.http.execute_with_retry(move |c| {
-                    c.get(&url)
-                        .header("Authorization", &auth)
+                    c.get(&req_url)
+                        .header("Authorization", &req_auth)
                         .header("Accept", "application/json, text/plain, */*")
                         .header("New-API-User", "1")
                 }).await {
@@ -383,8 +384,6 @@ impl GatewayAdapter for NewApiAdapter {
                                 });
                             }
                         }
-                    } else if resp.status().as_u16() == 401 {
-                        break; // Both auth methods will fail for this endpoint, try next
                     }
                 }
             }
