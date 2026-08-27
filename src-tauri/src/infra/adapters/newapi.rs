@@ -62,7 +62,7 @@ impl NewApiAdapter {
 
     /// Extracts balance and currency from various JSON responses.
     /// Never returns "unlimited" sentinel — only real numeric balances.
-    fn extract_balance(json: &Value) -> Option<(f64, String)> {
+    fn extract_balance(json: &Value, user_token: &str) -> Option<(f64, String)> {
         let target = json.get("data").unwrap_or(json);
         let curr = target.get("currency")
             .or_else(|| json.get("currency"))
@@ -71,72 +71,55 @@ impl NewApiAdapter {
             .unwrap_or("CNY")
             .to_string();
 
-        // --- Priority 1: User-account object (from /api/user/self, /api/user/wallet) ---
-        // quota field in New-API = remaining quota in raw points
-        // We compute remaining = quota - used_quota OR just take quota if > 0
-        if let Some(q) = Self::extract_num(target.get("quota").unwrap_or(&Value::Null)) {
-            if q > 0.0 {
-                return Some((Self::convert_quota_to_balance(q), curr));
-            }
-            // quota exists (even if 0): also check remain_quota override
-        }
-        for key in &["remain_quota", "balance", "current_balance"] {
-            if let Some(q) = target.get(key).and_then(Self::extract_num) {
-                if q > 0.0 {
-                    return Some((Self::convert_quota_to_balance(q), curr));
-                }
-            }
-        }
-
-        // Sub-object: data.user or data.account (some gateways nest here)
-        if let Some(sub) = target.get("user").or_else(|| target.get("account")) {
-            for key in &["quota", "remain_quota", "balance"] {
-                if let Some(q) = sub.get(key).and_then(Self::extract_num) {
-                    if q > 0.0 {
-                        let sub_curr = sub.get("currency")
-                            .and_then(|c| c.as_str())
-                            .unwrap_or(&curr)
-                            .to_string();
-                        return Some((Self::convert_quota_to_balance(q), sub_curr));
-                    }
-                }
-            }
-        }
-
-        // Top-level json (non-nested response)
-        for key in &["quota", "remain_quota", "balance"] {
-            if let Some(q) = json.get(key).and_then(Self::extract_num) {
-                if q > 0.0 {
-                    return Some((Self::convert_quota_to_balance(q), curr));
-                }
-            }
-        }
-
-        // --- Priority 2: Token-list array (from /api/token/) ---
-        // Read the token's own remain_quota.
-        // NOTE: ignore unlimited_quota flag entirely — only use actual numeric values.
+        // 1. Token list array (match user's token key or take active token quota)
         let list = json.as_array()
             .or_else(|| json.get("data").and_then(|d| d.as_array()))
             .or_else(|| json.get("data").and_then(|d| d.get("items")).and_then(|i| i.as_array()))
             .or_else(|| json.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()));
 
         if let Some(items) = list {
+            let clean_user_tok = user_token.trim().strip_prefix("Bearer ").unwrap_or(user_token).trim();
+            // 1a. Try to find exact matching token by key
             for item in items {
-                for key in &["remain_quota", "quota", "balance"] {
-                    if let Some(q) = item.get(key).and_then(Self::extract_num) {
-                        if q > 0.0 {
-                            let token_curr = item.get("currency")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or(&curr)
-                                .to_string();
-                            return Some((Self::convert_quota_to_balance(q), token_curr));
+                let key_matches = item.get("key").and_then(|k| k.as_str()).map(|k| {
+                    let clean_k = k.trim().strip_prefix("Bearer ").unwrap_or(k).trim();
+                    clean_k == clean_user_tok || clean_user_tok.contains(clean_k) || clean_k.contains(clean_user_tok)
+                }).unwrap_or(false);
+
+                if key_matches {
+                    if let Some(b) = item.get("balance").and_then(Self::extract_num) {
+                        if b >= 0.0 {
+                            let token_curr = item.get("currency").and_then(|c| c.as_str()).unwrap_or(&curr).to_string();
+                            return Some(((b * 10000.0).round() / 10000.0, token_curr));
                         }
+                    }
+                    if let Some(q) = item.get("remain_quota").or_else(|| item.get("quota")).and_then(Self::extract_num) {
+                        if q >= 0.0 {
+                            let token_curr = item.get("currency").and_then(|c| c.as_str()).unwrap_or(&curr).to_string();
+                            return Some(((q / 500_000.0 * 10000.0).round() / 10000.0, token_curr));
+                        }
+                    }
+                }
+            }
+
+            // 1b. Take first token with valid remain_quota
+            for item in items {
+                if let Some(q) = item.get("remain_quota").or_else(|| item.get("quota")).and_then(Self::extract_num) {
+                    if q >= 0.0 {
+                        let token_curr = item.get("currency").and_then(|c| c.as_str()).unwrap_or(&curr).to_string();
+                        return Some(((q / 500_000.0 * 10000.0).round() / 10000.0, token_curr));
+                    }
+                }
+                if let Some(b) = item.get("balance").and_then(Self::extract_num) {
+                    if b >= 0.0 {
+                        let token_curr = item.get("currency").and_then(|c| c.as_str()).unwrap_or(&curr).to_string();
+                        return Some(((b * 10000.0).round() / 10000.0, token_curr));
                     }
                 }
             }
         }
 
-        // --- Priority 3: OpenAI billing subscription style ---
+        // 2. OpenAI billing subscription format (hard_limit_usd is direct USD)
         let hard_limit = json.get("hard_limit_usd")
             .or_else(|| json.get("system_hard_limit_usd"))
             .or_else(|| json.get("total_available"))
@@ -145,16 +128,55 @@ impl NewApiAdapter {
         if let Some(limit) = hard_limit {
             let total_usage = json.get("total_usage").and_then(Self::extract_num).unwrap_or(0.0);
             let raw_balance = (limit - total_usage).max(0.0);
-            if raw_balance > 0.0 {
-                return Some((Self::convert_quota_to_balance(raw_balance), "USD".to_string()));
+            return Some(((raw_balance * 10000.0).round() / 10000.0, "USD".to_string()));
+        }
+
+        let sub_obj = target.get("user").or_else(|| target.get("account"));
+
+        // 3. Direct currency fields (e.g. balance = 12.34)
+        let direct_balance_candidates = [
+            target.get("balance"),
+            target.get("current_balance"),
+            sub_obj.and_then(|u| u.get("balance")),
+            json.get("balance"),
+        ];
+        for val in direct_balance_candidates.into_iter().flatten() {
+            if let Some(b) = Self::extract_num(val) {
+                if b >= 0.0 {
+                    let is_points = b > 500.0 && (val.is_i64() || val.is_u64());
+                    let final_val = if is_points {
+                        (b / 500_000.0 * 10000.0).round() / 10000.0
+                    } else {
+                        (b * 10000.0).round() / 10000.0
+                    };
+                    return Some((final_val, curr));
+                }
             }
         }
 
-        // No real numeric balance found — do NOT return unlimited sentinel
+        // 4. Quota points fields (e.g. quota = 50000000 -> 100.00)
+        let quota_candidates = [
+            target.get("quota"),
+            target.get("remain_quota"),
+            target.get("total_quota"),
+            sub_obj.and_then(|u| u.get("quota")),
+            sub_obj.and_then(|u| u.get("remain_quota")),
+            json.get("quota"),
+            json.get("remain_quota"),
+        ];
+        for val in quota_candidates.into_iter().flatten() {
+            if let Some(q) = Self::extract_num(val) {
+                if q >= 0.0 {
+                    let final_val = (q / 500_000.0 * 10000.0).round() / 10000.0;
+                    return Some((final_val, curr));
+                }
+            }
+        }
+
         None
     }
 
-    /// Helper to parse Unix timestamp safely handling both seconds and milliseconds.
+    /// Helper to parse Unix timestamp safely handling numbers and various string formats.
     fn parse_timestamp(val: Option<&Value>) -> DateTime<Utc> {
         let now = Utc::now();
         match val {
@@ -170,9 +192,19 @@ impl NewApiAdapter {
                 }
             }
             Some(Value::String(s)) => {
-                DateTime::parse_from_rfc3339(s)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(now)
+                if let Ok(ts) = s.parse::<i64>() {
+                    if ts > 10_000_000_000 {
+                        Utc.timestamp_millis_opt(ts).single().unwrap_or(now)
+                    } else {
+                        Utc.timestamp_opt(ts, 0).single().unwrap_or(now)
+                    }
+                } else if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                    dt.with_timezone(&Utc)
+                } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+                    DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)
+                } else {
+                    now
+                }
             }
             _ => now,
         }
@@ -344,19 +376,18 @@ impl GatewayAdapter for NewApiAdapter {
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
         let token = self.clean_token();
         let endpoints = [
-            "/api/user/self",
-            "/api/user/wallet",
-            "/api/wallet",
-            "/api/user/dashboard",
-            "/api/dashboard",
+            "/dashboard/billing/subscription",
+            "/v1/dashboard/billing/subscription",
             "/api/token/?p=0&size=10",
             "/api/token/",
             "/api/token",
             "/api/usage/token",
-            "/dashboard/billing/subscription",
-            "/v1/dashboard/billing/subscription",
             "/api/v1/user/profile",
-            "/api/v1/user/self",
+            "/api/user/wallet",
+            "/api/wallet",
+            "/api/user/self",
+            "/api/user/dashboard",
+            "/api/dashboard",
             "/api/user/info",
         ];
 
@@ -367,15 +398,15 @@ impl GatewayAdapter for NewApiAdapter {
             for auth in &auth_variants {
                 let req_url = url.clone();
                 let req_auth = auth.clone();
+                let token_for_extract = token.clone();
                 if let Ok(resp) = self.http.execute_with_retry(move |c| {
                     c.get(&req_url)
                         .header("Authorization", &req_auth)
                         .header("Accept", "application/json, text/plain, */*")
-                        .header("New-API-User", "1")
                 }).await {
                     if resp.status().is_success() {
                         if let Ok(json) = resp.json::<Value>().await {
-                            if let Some((bal, curr)) = Self::extract_balance(&json) {
+                            if let Some((bal, curr)) = Self::extract_balance(&json, &token_for_extract) {
                                 return Ok(BalanceInfo {
                                     balance: Some(bal),
                                     currency: curr,
@@ -399,10 +430,11 @@ impl GatewayAdapter for NewApiAdapter {
     ) -> Result<Vec<UsageRecord>, AppError> {
         let token = self.clean_token();
         let endpoints = [
-            "/api/log/self?p=0&page_size=100",
-            "/api/log/self?page=1&size=100",
             "/api/log/token?p=0&page_size=100",
             "/api/log/token?page=1&size=100",
+            "/api/log/token",
+            "/api/log/self?p=0&page_size=100",
+            "/api/log/self?page=1&size=100",
             "/api/log?p=0&page_size=100",
             "/api/log?page=1&size=100",
             "/api/log",
@@ -445,13 +477,15 @@ impl GatewayAdapter for NewApiAdapter {
             let input_tokens = item.get("prompt_tokens")
                 .or_else(|| item.get("input_tokens"))
                 .or_else(|| item.get("prompt"))
-                .and_then(|v| v.as_u64())
+                .and_then(Self::extract_num)
+                .map(|n| n as u64)
                 .unwrap_or(0);
 
             let output_tokens = item.get("completion_tokens")
                 .or_else(|| item.get("output_tokens"))
                 .or_else(|| item.get("completion"))
-                .and_then(|v| v.as_u64())
+                .and_then(Self::extract_num)
+                .map(|n| n as u64)
                 .unwrap_or(0);
 
             let cache_read_tokens = Self::extract_cache_read_tokens(&item);

@@ -7,7 +7,7 @@ import { formatErrorMessage } from "../utils/error";
 /**
  * Hook for fetching and caching site statistics by time preset.
  */
-export function useSiteStats(siteId?: string, preset: TimeRangePreset = "24h") {
+export function useSiteStats(siteId?: string, preset: TimeRangePreset = "24h", lastSuccessAt?: string | null) {
   const [metrics, setMetrics] = useState<AggregatedMetrics | null>(null);
   const [models, setModels] = useState<ModelUsageMetrics[]>([]);
   const [loading, setLoading] = useState(false);
@@ -39,7 +39,7 @@ export function useSiteStats(siteId?: string, preset: TimeRangePreset = "24h") {
 
   useEffect(() => {
     fetchStats();
-  }, [fetchStats]);
+  }, [fetchStats, lastSuccessAt]);
 
   return { metrics, models, loading, error, refetch: fetchStats };
 }

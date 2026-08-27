@@ -44,7 +44,7 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
   const [manualCompact, setManualCompact] = useState(false);
   const [isSmallContainer, setIsSmallContainer] = useState(false);
 
-  const { metrics, models } = useSiteStats(currentSite?.id, preset);
+  const { metrics, models } = useSiteStats(currentSite?.id, preset, currentSite?.last_success_at);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
