@@ -176,7 +176,10 @@ export function App() {
         <SiteFormModal
           site={editingSite}
           onClose={() => setIsFormOpen(false)}
-          onSaved={refreshList}
+          onSaved={async () => {
+            await refreshList();
+            refreshAll();
+          }}
         />
       )}
 

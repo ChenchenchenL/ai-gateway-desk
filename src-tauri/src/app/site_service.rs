@@ -85,9 +85,13 @@ impl SiteService {
         site.id = id;
 
         repo.save(&site)?;
-        SecureStore::set_auth_token(&id, &req.auth_token)?;
+        if !req.auth_token.trim().is_empty() {
+            SecureStore::set_auth_token(&id, &req.auth_token)?;
+        }
         if let Some(ref admin) = req.admin_token {
-            SecureStore::set_admin_token(&id, admin)?;
+            if !admin.trim().is_empty() {
+                SecureStore::set_admin_token(&id, admin)?;
+            }
         }
 
         let mut resp = SiteResponse::from(&site);
