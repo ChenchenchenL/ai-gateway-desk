@@ -25,8 +25,28 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
   const [name, setName] = useState(site?.name ?? "");
   const [provider, setProvider] = useState<ProviderType>(site?.provider ?? "one_api");
   const [baseUrl, setBaseUrl] = useState(site?.base_url ?? "https://");
-  const [authToken, setAuthToken] = useState("");
-  const [adminToken, setAdminToken] = useState("");
+  const [authToken, setAuthToken] = useState(() => {
+    if (typeof window !== "undefined" && site?.id) {
+      try {
+        const stored = JSON.parse(localStorage.getItem("ai_gateway_desk_tokens") || "{}");
+        return stored[site.id] || "";
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  });
+  const [adminToken, setAdminToken] = useState(() => {
+    if (typeof window !== "undefined" && site?.id) {
+      try {
+        const stored = JSON.parse(localStorage.getItem("ai_gateway_desk_admin_tokens") || "{}");
+        return stored[site.id] || "";
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  });
   const [enabled, setEnabled] = useState(site?.enabled ?? true);
 
   const [testing, setTesting] = useState(false);
@@ -140,30 +160,34 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
 
           <div>
             <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
-              <span>API Token / 访问密钥</span>
-              <span className="text-[10px] text-slate-500">本地加密保存</span>
+              <span>{provider === "sub2_api" ? "用户 JWT Token (推荐)" : "API Token / 访问密钥"}</span>
+              <span className="text-[10px] text-slate-500">
+                {provider === "sub2_api" ? "用于读取余额与日志 (eyJ...)" : "本地加密保存"}
+              </span>
             </label>
             <input
               type="password"
               required={!site}
               value={authToken}
               onChange={(e) => setAuthToken(e.target.value)}
-              placeholder={site ? "留空则保持原密钥不变" : "sk-..."}
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
+              placeholder={provider === "sub2_api" ? "eyJhbGci... (从浏览器登录抓取的 access_token)" : (site ? "留空则保持原密钥不变" : "sk-...")}
+              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
             />
           </div>
 
           <div>
             <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
-              <span>管理 Token (可选)</span>
-              <span className="text-[10px] text-slate-500">仅用于查询额度/日志</span>
+              <span>{provider === "sub2_api" ? "API Key (可选)" : "管理 Token (可选)"}</span>
+              <span className="text-[10px] text-slate-500">
+                {provider === "sub2_api" ? "用于查询费率倍率 (sk-...)" : "仅用于查询额度/日志"}
+              </span>
             </label>
             <input
               type="password"
               value={adminToken}
               onChange={(e) => setAdminToken(e.target.value)}
-              placeholder="可选填"
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
+              placeholder={provider === "sub2_api" ? "sk-..." : "可选填"}
+              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
             />
           </div>
 

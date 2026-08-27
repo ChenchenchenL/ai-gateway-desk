@@ -405,26 +405,28 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   let windowResetAt: string | undefined = undefined;
   const newLogs: StoredLog[] = [];
 
+  // Token classification: detect JWT session token vs sk- API Key
+  const rawTokens = [authToken, adminToken].map(cleanToken).filter(Boolean);
+  const sub2ApiJwt = rawTokens.find(
+    (t) => t.startsWith("eyJ") || (!t.startsWith("sk-") && t.length > 50)
+  );
+  const sub2ApiKey = rawTokens.find(
+    (t) => t.startsWith("sk-")
+  ) || (!sub2ApiJwt ? rawTokens[0] : undefined);
+
   // 1. Balance & Profile Endpoint Candidates
-  //
-  // Sub2API auth model (from source analysis of Wei-Shaw/sub2api):
-  //   - sk-xxx API Key  → /v1/sub2api/billing only (returns rate multiplier, NOT balance)
-  //   - JWT session token → /api/v1/user/profile (returns { data: { balance: <USD float> } })
-  //                       → /api/v1/usage (returns usage records list)
-  // Convention: authToken = JWT session token; adminToken = sk-xxx API Key.
   const balanceEndpoints: { url: string; token: string }[] = [];
 
   if (site.provider === "sub2_api") {
-    // JWT token: can retrieve user balance
-    if (authToken) {
+    // Only query /api/v1/user/profile if we have a real JWT token
+    if (sub2ApiJwt) {
       balanceEndpoints.push(
-        { url: `${baseUrl}/api/v1/user/profile`, token: authToken }
+        { url: `${baseUrl}/api/v1/user/profile`, token: sub2ApiJwt }
       );
     }
-    // sk-key: can only retrieve billing rate info (not balance), try anyway
-    const apiKey = adminToken || authToken || "";
-    if (apiKey) {
-      balanceEndpoints.push({ url: `${baseUrl}/v1/sub2api/billing`, token: apiKey });
+    // sk- API Key queries /v1/sub2api/billing for billing/rate info
+    if (sub2ApiKey) {
+      balanceEndpoints.push({ url: `${baseUrl}/v1/sub2api/billing`, token: sub2ApiKey });
     }
   } else {
     if (adminToken) {
@@ -475,11 +477,9 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   }
 
   // 2. Sub2API Window Quota
-  // /api/v1/subscriptions requires JWT token (not sk- key)
-  // /api/v1/user/profile also includes subscription quota info
-  if (site.provider === "sub2_api" && authToken) {
+  if (site.provider === "sub2_api" && sub2ApiJwt) {
     try {
-      const res = await proxyFetch(`${baseUrl}/api/v1/subscriptions`, authToken);
+      const res = await proxyFetch(`${baseUrl}/api/v1/subscriptions`, sub2ApiJwt);
       if (res.ok) {
         const json = await res.json();
         console.log(`[AI Gateway Desk] Sub2API subscriptions:`, json);
@@ -500,17 +500,15 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   }
 
   // 3. Log Endpoint Candidates
-  // Sub2API: /api/v1/usage requires JWT token
-  // New-API: /api/log/self requires user access token
   const logCandidates: { path: string; token: string }[] = [];
 
   if (site.provider === "sub2_api") {
-    if (authToken) {
+    if (sub2ApiJwt) {
       // JWT token: full usage history
-      logCandidates.push({ path: "/api/v1/usage", token: authToken });
-      logCandidates.push({ path: "/api/v1/usage/errors", token: authToken });
+      logCandidates.push({ path: "/api/v1/usage", token: sub2ApiJwt });
     }
   } else {
+
     if (adminToken) {
       logCandidates.push({ path: "/api/log/self", token: adminToken });
     }
