@@ -389,22 +389,27 @@ async function proxyFetch(targetUrl: string, token: string): Promise<{ ok: boole
     headers["Authorization"] = `Bearer ${pureToken}`;
   }
 
-  // 1. If in Tauri .exe, use Rust proxy_http_get to completely bypass CORS & WebView network restrictions
+  // 1. Prefer the WebView browser request. Some gateways expose balance and
+  // usage endpoints only to browser clients and reject the native client.
   if (isTauri()) {
+    try {
+      const browserResponse = await fetch(targetUrl, { headers, mode: "cors" });
+      if (browserResponse.ok) return browserResponse;
+    } catch {
+      // Fall through to the native proxy when the gateway does not allow CORS.
+    }
+
+    // 2. Fall back to the Rust proxy for gateways without CORS support.
     try {
       const text = await invoke<string>("proxy_http_get", { url: targetUrl, headers });
       const parsed = JSON.parse(text);
-      return {
-        ok: true,
-        status: 200,
-        json: async () => parsed,
-      };
+      return { ok: true, status: 200, json: async () => parsed };
     } catch (e) {
-      console.warn("[AI Gateway Desk] Tauri proxy_http_get error, fallback to webview fetch:", e);
+      console.warn("[AI Gateway Desk] Browser and Tauri proxy requests failed:", e);
     }
   }
 
-  // 2. If in web development mode, try Vite dev proxy
+  // 3. If in web development mode, try Vite dev proxy
   const proxyUrl = `/__api_proxy?url=${encodeURIComponent(targetUrl)}`;
   try {
     const res = await fetch(proxyUrl, { headers });
@@ -415,7 +420,7 @@ async function proxyFetch(targetUrl: string, token: string): Promise<{ ok: boole
     // fallback
   }
 
-  // 3. Direct browser fetch
+  // 4. Direct browser fetch
   return await fetch(targetUrl, { headers, mode: "cors" });
 }
 
