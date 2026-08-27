@@ -11,11 +11,10 @@ interface SiteFormModalProps {
 }
 
 const PROVIDERS: { label: string; value: ProviderType; defaultUrl: string }[] = [
+  { label: "New-API 中转站 (推荐)", value: "new_api", defaultUrl: "https://api.new-api.com" },
   { label: "One-API 中转站", value: "one_api", defaultUrl: "https://api.one-api.com" },
-  { label: "New-API 中转站", value: "new_api", defaultUrl: "https://api.new-api.com" },
-  { label: "Sub2API 订阅网关", value: "sub2_api", defaultUrl: "https://sub.sub2api.com" },
-  { label: "OpenAI Compatible", value: "openai_compatible", defaultUrl: "https://api.openai.com" },
-  { label: "Anthropic Compatible", value: "anthropic_compatible", defaultUrl: "https://api.anthropic.com" },
+  { label: "OpenAI 兼容网关", value: "openai_compatible", defaultUrl: "https://api.openai.com" },
+  { label: "Anthropic 兼容网关", value: "anthropic_compatible", defaultUrl: "https://api.anthropic.com" },
 ];
 
 /**
@@ -23,7 +22,7 @@ const PROVIDERS: { label: string; value: ProviderType; defaultUrl: string }[] = 
  */
 export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onSaved }) => {
   const [name, setName] = useState(site?.name ?? "");
-  const [provider, setProvider] = useState<ProviderType>(site?.provider ?? "one_api");
+  const [provider, setProvider] = useState<ProviderType>(site?.provider ?? "new_api");
   const [baseUrl, setBaseUrl] = useState(site?.base_url ?? "https://");
   const [authToken, setAuthToken] = useState(() => {
     if (typeof window !== "undefined" && site?.id) {
@@ -63,8 +62,8 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
   };
 
   const handleTestConnection = async () => {
-    if (!authToken.trim()) {
-      setTestError("请先输入 API Token");
+    if (!authToken.trim() && !adminToken.trim()) {
+      setTestError("请先输入 API Token 或 管理 Token");
       return;
     }
     setTesting(true);
@@ -129,7 +128,7 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="例如：主号 One-API / Claude 网关"
+              placeholder="例如：主号 New-API / 个人中转站"
               className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
             />
           </div>
@@ -154,39 +153,36 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
               required
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="例如：https://api.ikuncode.cc"
               className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
             />
           </div>
 
           <div>
             <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
-              <span>{provider === "sub2_api" ? "用户 JWT Token (推荐)" : "API Token / 访问密钥"}</span>
-              <span className="text-[10px] text-slate-500">
-                {provider === "sub2_api" ? "用于读取余额与日志 (eyJ...)" : "本地加密保存"}
-              </span>
+              <span>API Token / 访问密钥</span>
+              <span className="text-[10px] text-slate-500">用于余额与个人用量</span>
             </label>
             <input
               type="password"
               required={!site}
               value={authToken}
               onChange={(e) => setAuthToken(e.target.value)}
-              placeholder={provider === "sub2_api" ? "eyJhbGci... (从浏览器登录抓取的 access_token)" : (site ? "留空则保持原密钥不变" : "sk-...")}
+              placeholder={site ? "留空则保持原密钥不变" : "sk-... 或 访问令牌"}
               className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
             />
           </div>
 
           <div>
             <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
-              <span>{provider === "sub2_api" ? "API Key (可选)" : "管理 Token (可选)"}</span>
-              <span className="text-[10px] text-slate-500">
-                {provider === "sub2_api" ? "用于查询费率倍率 (sk-...)" : "仅用于查询额度/日志"}
-              </span>
+              <span>管理 Token (可选)</span>
+              <span className="text-[10px] text-slate-500">仅用于全局管理日志</span>
             </label>
             <input
               type="password"
               value={adminToken}
               onChange={(e) => setAdminToken(e.target.value)}
-              placeholder={provider === "sub2_api" ? "sk-..." : "可选填"}
+              placeholder="可选填（Root Token）"
               className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
             />
           </div>
