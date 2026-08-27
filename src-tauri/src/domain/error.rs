@@ -86,3 +86,9 @@ impl AppError {
         Self::new(ErrorCategory::Storage, message)
     }
 }
+
+impl From<rusqlite::Error> for AppError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::storage(err.to_string())
+    }
+}

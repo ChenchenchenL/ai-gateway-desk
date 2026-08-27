@@ -48,7 +48,8 @@ impl SecureStore {
                         updated_at = excluded.updated_at
                     "#,
                     params![site_id.to_string(), token, now],
-                )
+                )?;
+                Ok(())
             });
         }
 
@@ -115,7 +116,8 @@ impl SecureStore {
                         updated_at = excluded.updated_at
                     "#,
                     params![site_id.to_string(), token, now],
-                )
+                )?;
+                Ok(())
             });
         }
 
@@ -177,7 +179,8 @@ impl SecureStore {
 
         if let Some(db) = DB_FALLBACK.get() {
             let _ = db.with_conn(|conn| {
-                conn.execute("DELETE FROM site_credentials WHERE site_id = ?1", [site_id.to_string()])
+                conn.execute("DELETE FROM site_credentials WHERE site_id = ?1", [site_id.to_string()])?;
+                Ok(())
             });
         }
 
