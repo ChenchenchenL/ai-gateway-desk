@@ -139,6 +139,15 @@ function convertQuotaToBalance(rawQuota: number): number {
   return Number(rawQuota.toFixed(4));
 }
 
+function parseNumericValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
 /**
  * Extracts balance and currency from all common OneAPI / NewAPI / Sub2API responses.
  * @param skipQuotaConversion - set true for Sub2API where balance is already a USD float
@@ -173,9 +182,10 @@ function extractBalanceFromJson(
       const matches = cleanUserTok && keyStr && (keyStr === cleanUserTok || cleanUserTok.includes(keyStr) || keyStr.includes(cleanUserTok));
       if (matches) {
         const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
-        if (typeof itemQuota === "number") {
+        const numericQuota = parseNumericValue(itemQuota);
+        if (numericQuota !== undefined) {
           return {
-            balance: convert(itemQuota),
+            balance: convert(numericQuota),
             currency: String(item?.currency || defaultCurrency),
           };
         }
@@ -185,9 +195,10 @@ function extractBalanceFromJson(
     // 2. Otherwise take first token with numerical quota
     for (const item of list) {
       const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
-      if (typeof itemQuota === "number") {
+      const numericQuota = parseNumericValue(itemQuota);
+      if (numericQuota !== undefined) {
         return {
-          balance: convert(itemQuota),
+          balance: convert(numericQuota),
           currency: String(item?.currency || defaultCurrency),
         };
       }
@@ -206,12 +217,14 @@ function extractBalanceFromJson(
 
   // Sub2API user profile object { data: { balance: 0.00, ... } } — balance is direct USD
   const userObj = (target.user || target.account) as Record<string, unknown> | undefined;
-  if (userObj && typeof userObj.balance === "number") {
-    return { balance: convert(userObj.balance), currency: detectedCurrency };
+  const userBalance = userObj ? parseNumericValue(userObj.balance) : undefined;
+  if (userBalance !== undefined) {
+    return { balance: convert(userBalance), currency: detectedCurrency };
   }
 
-  if (typeof target.balance === "number") {
-    return { balance: convert(target.balance), currency: detectedCurrency };
+  const targetBalance = parseNumericValue(target.balance);
+  if (targetBalance !== undefined) {
+    return { balance: convert(targetBalance), currency: detectedCurrency };
   }
 
   const candidates = [
@@ -226,15 +239,17 @@ function extractBalanceFromJson(
   ];
 
   for (const val of candidates) {
-    if (typeof val === "number") {
-      return { balance: convert(val), currency: detectedCurrency };
+    const numericValue = parseNumericValue(val);
+    if (numericValue !== undefined) {
+      return { balance: convert(numericValue), currency: detectedCurrency };
     }
   }
 
   const hardLimit = (obj.hard_limit_usd ?? obj.system_hard_limit_usd ?? obj.total_available) as number | undefined;
-  if (typeof hardLimit === "number" && hardLimit > 0) {
-    const totalUsage = typeof obj.total_usage === "number" ? obj.total_usage : 0;
-    return { balance: convert(Math.max(0, hardLimit - totalUsage)), currency: detectedCurrency };
+  const numericHardLimit = parseNumericValue(hardLimit);
+  if (numericHardLimit !== undefined && numericHardLimit > 0) {
+    const totalUsage = parseNumericValue(obj.total_usage) ?? 0;
+    return { balance: convert(Math.max(0, numericHardLimit - totalUsage)), currency: detectedCurrency };
   }
 
   return {};
