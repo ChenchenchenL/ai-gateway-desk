@@ -9,6 +9,7 @@ import { useSettings } from "./hooks/useSettings";
 import { Site } from "./types";
 import { siteService } from "./services/siteService";
 import { Plus, Server } from "lucide-react";
+import { useWidgetDrag } from "./hooks/useWidgetDrag";
 
 const ACTIVE_SITE_KEY = "ai_gateway_desk_active_site_id";
 
@@ -19,6 +20,7 @@ export function App() {
   const { sites, refreshList } = useSites();
   const { refreshing, refreshAll } = useRefresh(refreshList);
   const { settings, updateSettings, clearCache } = useSettings();
+  const { position, handleStartDrag } = useWidgetDrag();
 
   const [activeSiteId, setActiveSiteId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -112,7 +114,13 @@ export function App() {
       className="w-screen h-screen overflow-hidden bg-transparent select-none p-2 flex items-center justify-center relative"
     >
       {/* Centered Floating Widget Container (Fixed 350px x 560px in web preview, fits native exe window) */}
-      <div className="w-full h-full max-w-[360px] max-h-[570px] flex flex-col relative">
+      <div
+        style={{
+          transform: position ? `translate(${position.x}px, ${position.y}px)` : undefined,
+        }}
+        onMouseDown={handleStartDrag}
+        className="w-full h-full max-w-[360px] max-h-[570px] flex flex-col relative"
+      >
         {sites.length === 0 ? (
           /* Empty State Welcome Card */
           <div

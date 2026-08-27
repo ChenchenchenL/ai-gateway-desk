@@ -11,11 +11,19 @@ interface ModelRankSectionProps {
  * Windows 11 Light Frosted Acrylic Model Usage Ranking Section (Fits Top 3 with zero scrollbar).
  */
 export const ModelRankSection: React.FC<ModelRankSectionProps> = ({ models }) => {
-  // Sort models by total tokens descending
-  const sortedModels = [...models].sort((a, b) => {
-    const totalA = a.input_tokens + a.output_tokens;
-    const totalB = b.input_tokens + b.output_tokens;
-    return totalB - totalA || b.request_count - a.request_count;
+  const list = Array.isArray(models) ? models : [];
+
+  // Sort models by total tokens descending with complete null safety
+  const sortedModels = [...list].sort((a, b) => {
+    const inA = typeof a?.input_tokens === "number" ? a.input_tokens : 0;
+    const outA = typeof a?.output_tokens === "number" ? a.output_tokens : 0;
+    const inB = typeof b?.input_tokens === "number" ? b.input_tokens : 0;
+    const outB = typeof b?.output_tokens === "number" ? b.output_tokens : 0;
+    const totalA = inA + outA;
+    const totalB = inB + outB;
+    const reqA = typeof a?.request_count === "number" ? a.request_count : 0;
+    const reqB = typeof b?.request_count === "number" ? b.request_count : 0;
+    return totalB - totalA || reqB - reqA;
   });
 
   const getRankBadge = (index: number) => {
@@ -75,7 +83,7 @@ export const ModelRankSection: React.FC<ModelRankSectionProps> = ({ models }) =>
         <div className="overflow-y-auto pr-0.5 pt-1 flex flex-col gap-1 flex-1 min-h-0">
           {sortedModels.map((m, idx) => (
             <div
-              key={m.model_name}
+              key={m?.model_name || `model-${idx}`}
               className={`px-1.5 py-1 rounded-lg border transition flex items-center justify-between text-xs shadow-xs ${
                 idx === 0
                   ? "bg-amber-500/5 hover:bg-amber-500/10 border-amber-200/60"
@@ -91,10 +99,10 @@ export const ModelRankSection: React.FC<ModelRankSectionProps> = ({ models }) =>
                 {getRankBadge(idx)}
                 <div className="flex flex-col truncate">
                   <span className="font-bold text-slate-800 truncate text-[10.5px] leading-tight">
-                    {m.model_name}
+                    {m?.model_name || "未知模型"}
                   </span>
                   <span className="text-[9px] text-slate-400 font-medium leading-none mt-0.5">
-                    {m.request_count.toLocaleString()} 次调用
+                    {(m?.request_count ?? 0).toLocaleString()} 次调用
                   </span>
                 </div>
               </div>
@@ -102,10 +110,10 @@ export const ModelRankSection: React.FC<ModelRankSectionProps> = ({ models }) =>
               {/* Right: Tokens & Cache Hit */}
               <div className="flex flex-col items-end shrink-0 text-right">
                 <span className="font-bold text-slate-800 tabular-digits text-[10px] leading-tight">
-                  {formatTokens(m.input_tokens)} <span className="text-slate-400 font-normal">/</span> {formatTokens(m.output_tokens)}
+                  {formatTokens(m?.input_tokens)} <span className="text-slate-400 font-normal">/</span> {formatTokens(m?.output_tokens)}
                 </span>
                 <span className="text-[9px] text-indigo-600 font-bold tabular-digits leading-none mt-0.5">
-                  Hit: {formatTokens(m.cache_read_tokens)} ({formatCacheHitRate(m.cache_hit_rate_pct)})
+                  Hit: {formatTokens(m?.cache_read_tokens)} ({formatCacheHitRate(m?.cache_hit_rate_pct)})
                 </span>
               </div>
             </div>

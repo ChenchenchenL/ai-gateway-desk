@@ -18,6 +18,7 @@ impl HttpClient {
         let inner = Client::builder()
             .timeout(Duration::from_secs(15))
             .connect_timeout(Duration::from_secs(5))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| Client::new());
         Self { inner }

@@ -14,28 +14,28 @@ export const MetricsGridCard: React.FC<MetricsGridCardProps> = ({ metrics }) => 
   const items = [
     {
       label: "输入 Tokens",
-      value: formatTokens(metrics.total_input_tokens),
+      value: formatTokens(metrics?.total_input_tokens),
       icon: <ArrowDownLeft className="w-3 h-3" />,
       colorClass: "text-sky-700",
       iconBg: "bg-sky-500/10 text-sky-600 border border-sky-500/20",
     },
     {
       label: "输出 Tokens",
-      value: formatTokens(metrics.total_output_tokens),
+      value: formatTokens(metrics?.total_output_tokens),
       icon: <ArrowUpRight className="w-3 h-3" />,
       colorClass: "text-emerald-700",
       iconBg: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20",
     },
     {
       label: "缓存命中",
-      value: formatTokens(metrics.total_cache_read_tokens),
+      value: formatTokens(metrics?.total_cache_read_tokens),
       icon: <Zap className="w-3 h-3" />,
       colorClass: "text-amber-700",
       iconBg: "bg-amber-500/10 text-amber-600 border border-amber-500/20",
     },
     {
       label: "请求次数",
-      value: metrics.total_requests.toLocaleString(),
+      value: (metrics?.total_requests ?? 0).toLocaleString(),
       icon: <Activity className="w-3 h-3" />,
       colorClass: "text-indigo-700",
       iconBg: "bg-indigo-500/10 text-indigo-600 border border-indigo-500/20",

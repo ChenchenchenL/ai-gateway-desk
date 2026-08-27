@@ -1,7 +1,10 @@
 /**
- * Formats raw token counts into readable string representations (e.g. 1.2K, 3.4M).
+ * Formats raw token counts safely into readable string representations (e.g. 1.2K, 3.4M).
  */
-export function formatTokens(tokens: number): string {
+export function formatTokens(tokens?: number | null): string {
+  if (typeof tokens !== "number" || isNaN(tokens)) {
+    return "0";
+  }
   if (tokens >= 1_000_000) {
     return `${(tokens / 1_000_000).toFixed(2)}M`;
   }
@@ -14,11 +17,12 @@ export function formatTokens(tokens: number): string {
 /**
  * Formats currency amounts with precision (supporting 4 decimals for small balances like ¥0.1491).
  */
-export function formatCurrency(amount: number, currency = "USD"): string {
-  const isCny =
-    currency.toUpperCase() === "CNY" ||
-    currency === "¥" ||
-    currency.toUpperCase() === "RMB";
+export function formatCurrency(amount?: number | null, currency = "USD"): string {
+  if (typeof amount !== "number" || isNaN(amount)) {
+    return "--";
+  }
+  const currStr = String(currency || "USD").toUpperCase();
+  const isCny = currStr === "CNY" || currStr === "¥" || currStr === "RMB";
   const symbol = isCny ? "¥" : "$";
 
   if (amount < 1 && amount > 0) {
@@ -31,10 +35,10 @@ export function formatCurrency(amount: number, currency = "USD"): string {
 }
 
 /**
- * Formats cache hit rate percentage.
+ * Formats cache hit rate percentage safely.
  */
-export function formatCacheHitRate(rate?: number): string {
-  if (rate === undefined || isNaN(rate)) {
+export function formatCacheHitRate(rate?: number | null): string {
+  if (typeof rate !== "number" || isNaN(rate)) {
     return "--";
   }
   return `${rate.toFixed(1)}%`;

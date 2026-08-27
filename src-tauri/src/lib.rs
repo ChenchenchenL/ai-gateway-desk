@@ -54,6 +54,7 @@ pub fn run() {
             let db_path = data_dir.join("ai_gateway_desk.db");
 
             let db = Arc::new(Database::open(db_path)?);
+            infra::storage::secure_store::init_secure_store_db(db.clone());
             let site_service = Arc::new(SiteService::new(db.clone()));
             let refresh_service = Arc::new(RefreshService::new(db.clone()));
             let stats_service = Arc::new(StatsService::new(db.clone()));

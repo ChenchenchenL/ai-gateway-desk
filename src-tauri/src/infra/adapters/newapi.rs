@@ -36,6 +36,10 @@ impl NewApiAdapter {
         format!("{}{}", self.base_url, path)
     }
 
+    fn clean_token(&self) -> String {
+        self.token.trim().strip_prefix("Bearer ").unwrap_or(self.token.trim()).trim().to_string()
+    }
+
     /// Converts New-API / One-API Quota points (500,000 = ¥1.00 / $1.00) to balance.
     fn convert_quota_to_balance(raw_quota: f64) -> f64 {
         if raw_quota > 500.0 {
@@ -308,24 +312,32 @@ impl GatewayAdapter for NewApiAdapter {
     }
 
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
-        let token = self.token.clone();
+        let token = self.clean_token();
         let endpoints = [
+            "/api/user/self",
             "/api/user/wallet",
             "/api/wallet",
             "/api/user/dashboard",
             "/api/dashboard",
-            "/api/user/self",
-            "/api/usage/token",
             "/api/token/?p=0&size=10",
             "/api/token/",
+            "/api/token",
+            "/api/usage/token",
             "/dashboard/billing/subscription",
             "/v1/dashboard/billing/subscription",
+            "/api/v1/user/profile",
+            "/api/v1/user/self",
             "/api/user/info",
         ];
 
         for path in &endpoints {
             let url = self.build_url(path);
-            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
+            let tok = token.clone();
+            if let Ok(resp) = self.http.execute_with_retry(move |c| {
+                c.get(&url)
+                    .header("Authorization", format!("Bearer {}", tok))
+                    .header("Accept", "application/json, text/plain, */*")
+            }).await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<Value>().await {
                         if let Some((bal, curr)) = Self::extract_balance(&json) {
@@ -349,18 +361,28 @@ impl GatewayAdapter for NewApiAdapter {
         _start_time: DateTime<Utc>,
         _end_time: DateTime<Utc>,
     ) -> Result<Vec<UsageRecord>, AppError> {
-        let token = self.token.clone();
+        let token = self.clean_token();
         let endpoints = [
-            "/api/log/token?p=0&page_size=100",
             "/api/log/self?p=0&page_size=100",
+            "/api/log/self?page=1&size=100",
+            "/api/log/token?p=0&page_size=100",
+            "/api/log/token?page=1&size=100",
             "/api/log?p=0&page_size=100",
+            "/api/log?page=1&size=100",
             "/api/log",
+            "/api/v1/log/self",
+            "/api/v1/usage",
         ];
 
         let mut items = Vec::new();
         for endpoint in &endpoints {
             let url = self.build_url(endpoint);
-            if let Ok(resp) = self.http.execute_with_retry(|c| c.get(&url).bearer_auth(&token)).await {
+            let tok = token.clone();
+            if let Ok(resp) = self.http.execute_with_retry(move |c| {
+                c.get(&url)
+                    .header("Authorization", format!("Bearer {}", tok))
+                    .header("Accept", "application/json, text/plain, */*")
+            }).await {
                 if resp.status().is_success() {
                     if let Ok(json) = resp.json::<Value>().await {
                         let extracted = Self::extract_log_array(json);

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Site } from "../../types";
+import { formatCurrency } from "../../utils/formatters";
 import {
   Pin,
   PinOff,
@@ -113,9 +114,8 @@ export const WidgetHeader: React.FC<WidgetHeaderProps> = ({
                     className="flex items-center gap-2 truncate flex-1 text-left cursor-pointer"
                   >
                     <Radio className={`w-3 h-3 shrink-0 ${currentSite?.id === s.id ? "text-indigo-600" : "text-slate-400"}`} />
-                    <span className="truncate">{s.name}</span>
                     <span className="text-[10px] text-slate-500 font-mono shrink-0 ml-auto mr-1">
-                      {s.current_balance !== undefined ? `¥${s.current_balance.toFixed(2)}` : ""}
+                      {typeof s.current_balance === "number" ? formatCurrency(s.current_balance, s.currency) : ""}
                     </span>
                   </button>
 

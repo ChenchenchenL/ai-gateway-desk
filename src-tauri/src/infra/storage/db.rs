@@ -85,6 +85,13 @@ impl Database {
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS site_credentials (
+                site_id TEXT PRIMARY KEY,
+                auth_token TEXT NOT NULL,
+                admin_token TEXT,
+                updated_at TEXT NOT NULL
+            );
             "#
         ).map_err(|e| AppError::new(ErrorCategory::Storage, format!("Database migration failed: {}", e)))?;
         Ok(())
