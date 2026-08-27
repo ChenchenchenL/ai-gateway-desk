@@ -18,7 +18,7 @@ const PROVIDERS: { label: string; value: ProviderType; defaultUrl: string }[] = 
 ];
 
 /**
- * Modal form for creating and editing monitored gateway sites.
+ * Windows 11 Fluent Acrylic Modal for creating and editing monitored gateway sites.
  */
 export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onSaved }) => {
   const [name, setName] = useState(site?.name ?? "");
@@ -109,59 +109,67 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl w-full max-w-sm overflow-hidden shadow-2xl flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-          <span className="text-sm font-semibold text-slate-100">
-            {site ? "编辑站点配置" : "添加中转与网关站点"}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/40 backdrop-blur-md animate-in fade-in duration-150 select-none">
+      <div className="acrylic-widget rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl flex flex-col animate-in zoom-in-95 duration-150">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-black/[0.08]">
+          <span className="text-sm font-bold text-slate-800">
+            {site ? "编辑站点配置" : "添加中转网关站点"}
           </span>
-          <button onClick={onClose} className="p-1 rounded text-slate-400 hover:text-slate-200">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-black/[0.06] transition cursor-pointer"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-3 text-xs">
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="p-3.5 flex flex-col gap-2.5 text-xs">
           <div>
-            <label className="block text-slate-300 font-medium mb-1">站点名称</label>
+            <label className="block text-slate-700 font-semibold mb-1">站点名称</label>
             <input
               type="text"
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="例如：主号 New-API / 个人中转站"
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
+              className="w-full px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 shadow-sm"
             />
           </div>
 
           <div>
-            <label className="block text-slate-300 font-medium mb-1">协议类型</label>
+            <label className="block text-slate-700 font-semibold mb-1">协议类型</label>
             <select
               value={provider}
               onChange={(e) => handleProviderChange(e.target.value as ProviderType)}
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
+              className="w-full px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500 shadow-sm cursor-pointer"
             >
               {PROVIDERS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
+                <option key={p.value} value={p.value} className="bg-slate-900 text-slate-100">
+                  {p.label}
+                </option>
               ))}
             </select>
           </div>
 
           <div>
-            <label className="block text-slate-300 font-medium mb-1">接口地址 (Base URL)</label>
+            <label className="block text-slate-700 font-semibold mb-1">接口地址 (Base URL)</label>
             <input
               type="url"
               required
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="例如：https://api.ikuncode.cc"
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500"
+              className="w-full px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 shadow-sm font-mono text-[11px]"
             />
           </div>
 
           <div>
-            <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+            <label className="block text-slate-700 font-semibold mb-1 flex items-center justify-between">
               <span>API Token / 访问密钥</span>
-              <span className="text-[10px] text-slate-500">用于余额与个人用量</span>
+              <span className="text-[10px] text-slate-500 font-normal">用于余额与个人用量</span>
             </label>
             <input
               type="password"
@@ -169,88 +177,87 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
               value={authToken}
               onChange={(e) => setAuthToken(e.target.value)}
               placeholder={site ? "留空则保持原密钥不变" : "sk-... 或 访问令牌"}
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
+              className="w-full px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono text-[11px] shadow-sm"
             />
           </div>
 
           <div>
-            <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+            <label className="block text-slate-700 font-semibold mb-1 flex items-center justify-between">
               <span>管理 Token (可选)</span>
-              <span className="text-[10px] text-slate-500">仅用于全局管理日志</span>
+              <span className="text-[10px] text-slate-500 font-normal">仅用于全局管理日志</span>
             </label>
             <input
               type="password"
               value={adminToken}
               onChange={(e) => setAdminToken(e.target.value)}
               placeholder="可选填（Root Token）"
-              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
+              className="w-full px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono text-[11px] shadow-sm"
             />
           </div>
 
-          <div className="flex items-center justify-between py-1">
-            <span className="text-slate-300 font-medium">启用此站点监控</span>
+          <div className="flex items-center justify-between py-0.5">
+            <span className="text-slate-700 font-semibold">启用此站点监控</span>
             <input
               type="checkbox"
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
-              className="w-4 h-4 rounded text-indigo-600 bg-slate-950 border-slate-700"
+              className="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-white/20 accent-indigo-600 cursor-pointer"
             />
           </div>
 
-          {/* Test connection result section */}
+          {/* Test connection error section */}
           {testError && (
-            <div className="p-2 rounded bg-rose-950/40 border border-rose-900/60 text-rose-300 flex items-start gap-1.5 text-[11px]">
+            <div className="p-2 rounded-xl bg-rose-950/60 border border-rose-800/60 text-rose-300 flex items-start gap-1.5 text-[11px] shadow-sm">
               <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span>{testError}</span>
             </div>
           )}
 
+          {/* Test connection success section */}
           {testedCaps && (
-            <div className="p-2 rounded bg-emerald-950/40 border border-emerald-900/60 text-emerald-300 flex flex-col gap-1 text-[11px]">
+            <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 flex flex-col gap-1 text-[11px] shadow-sm">
               <div className="flex items-center gap-1 font-semibold">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>连接测试成功！支持能力如下：</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>连接测试成功！支持能力：</span>
               </div>
               <div className="flex flex-wrap gap-1 mt-0.5 text-[10px]">
-                <span className={`px-1.5 py-0.5 rounded ${testedCaps.balance ? "bg-emerald-900/60 text-emerald-200" : "bg-slate-800 text-slate-500"}`}>
+                <span className={`px-1.5 py-0.5 rounded-md ${testedCaps.balance ? "bg-emerald-900/60 text-emerald-200 border border-emerald-700/50" : "bg-slate-800 text-slate-500"}`}>
                   余额: {testedCaps.balance ? "支持" : "不支持"}
                 </span>
-                <span className={`px-1.5 py-0.5 rounded ${testedCaps.usage ? "bg-emerald-900/60 text-emerald-200" : "bg-slate-800 text-slate-500"}`}>
+                <span className={`px-1.5 py-0.5 rounded-md ${testedCaps.usage ? "bg-emerald-900/60 text-emerald-200 border border-emerald-700/50" : "bg-slate-800 text-slate-500"}`}>
                   日志: {testedCaps.usage ? "支持" : "不支持"}
                 </span>
-                <span className={`px-1.5 py-0.5 rounded ${testedCaps.cache_usage ? "bg-emerald-900/60 text-emerald-200" : "bg-slate-800 text-slate-500"}`}>
+                <span className={`px-1.5 py-0.5 rounded-md ${testedCaps.cache_usage ? "bg-emerald-900/60 text-emerald-200 border border-emerald-700/50" : "bg-slate-800 text-slate-500"}`}>
                   Cache: {testedCaps.cache_usage ? "支持" : "不支持"}
-                </span>
-                <span className={`px-1.5 py-0.5 rounded ${testedCaps.window_quota ? "bg-emerald-900/60 text-emerald-200" : "bg-slate-800 text-slate-500"}`}>
-                  窗口配额: {testedCaps.window_quota ? "支持" : "不支持"}
                 </span>
               </div>
             </div>
           )}
 
-          <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+          {/* Actions Footer */}
+          <div className="flex items-center justify-between pt-2 border-t border-black/[0.08] mt-1">
             <button
               type="button"
               onClick={handleTestConnection}
               disabled={testing}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-medium transition flex items-center gap-1"
+              className="px-3 py-1.5 bg-slate-900/80 hover:bg-slate-900 border border-white/15 text-slate-200 rounded-xl font-medium transition flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
             >
-              {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+              {testing ? <Loader2 className="w-3 h-3 animate-spin text-indigo-400" /> : <KeyRound className="w-3 h-3" />}
               <span>测试连接</span>
             </button>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 text-slate-400 hover:text-slate-200"
+                className="px-3 py-1.5 text-slate-600 hover:text-slate-900 rounded-xl hover:bg-black/[0.05] transition font-semibold cursor-pointer"
               >
                 取消
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded transition disabled:opacity-50"
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition shadow-md shadow-indigo-600/30 disabled:opacity-50 cursor-pointer"
               >
                 {saving ? "保存中..." : "保存"}
               </button>
