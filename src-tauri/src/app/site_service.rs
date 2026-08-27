@@ -55,12 +55,17 @@ impl SiteService {
             return Err(AppError::new(ErrorCategory::Parse, "Base URL cannot be empty"));
         }
 
+        let mut clean_url = req.base_url.trim().trim_end_matches('/').to_string();
+        if !clean_url.starts_with("http://") && !clean_url.starts_with("https://") {
+            clean_url = format!("https://{}", clean_url);
+        }
+
         let id = req.id.unwrap_or_else(Uuid::new_v4);
         let repo = SiteRepository::new(&self.db);
         let existing = repo.get_by_id(&id)?;
 
         // Probe capabilities with provided token
-        let adapter = create_adapter(id, req.provider, req.base_url.clone(), req.auth_token.clone());
+        let adapter = create_adapter(id, req.provider, clean_url.clone(), req.auth_token.clone());
         let capabilities = adapter.probe_capabilities().await.unwrap_or_else(|_| {
             existing.as_ref().map(|s| s.capabilities).unwrap_or_default()
         });
@@ -69,13 +74,13 @@ impl SiteService {
             Some(mut s) => {
                 s.name = req.name;
                 s.provider = req.provider;
-                s.base_url = req.base_url;
+                s.base_url = clean_url;
                 s.enabled = req.enabled;
                 s.capabilities = capabilities;
                 s.updated_at = chrono::Utc::now();
                 s
             }
-            None => Site::new(req.name, req.provider, req.base_url, capabilities),
+            None => Site::new(req.name, req.provider, clean_url, capabilities),
         };
         site.id = id;
 

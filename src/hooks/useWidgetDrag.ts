@@ -1,7 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "../services/tauriClient";
 
 /**
- * Universal Drag Handler supporting both native Tauri 2.0 OS window dragging and web browser preview dragging.
+ * Universal Drag Handler:
+ * - In Tauri 2.0 .exe desktop app: Triggers synchronous native OS window dragging.
+ * - In Web Browser preview: Smoothly translates the widget across the browser screen.
  */
 export function useWidgetDrag() {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -13,8 +17,8 @@ export function useWidgetDrag() {
     posY: 0,
   });
 
-  const handleStartDrag = useCallback(async (e: React.MouseEvent) => {
-    // Only handle primary (left) mouse click
+  const handleStartDrag = useCallback((e: React.MouseEvent) => {
+    // Only handle left mouse click
     if (e.button !== 0) return;
 
     // Ignore interactive elements
@@ -30,19 +34,18 @@ export function useWidgetDrag() {
       return;
     }
 
-    // 1. If in Tauri desktop native environment, trigger OS-level native window drag
-    if (typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)) {
+    // 1. In native Tauri desktop app: Trigger synchronous native OS window dragging
+    if (isTauri()) {
       try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const appWindow = getCurrentWindow();
-        await appWindow.startDragging();
-        return;
+        appWindow.startDragging();
       } catch (err) {
-        console.warn("Tauri startDragging fallback:", err);
+        console.warn("Tauri native startDragging:", err);
       }
+      return;
     }
 
-    // 2. In Web Browser preview mode, drag the widget freely across the screen
+    // 2. In Web Browser preview mode: Smooth CSS transform dragging
     isDraggingRef.current = true;
     const initialX = position?.x ?? 0;
     const initialY = position?.y ?? 0;
@@ -55,6 +58,9 @@ export function useWidgetDrag() {
   }, [position]);
 
   useEffect(() => {
+    // Only attach browser drag listeners when NOT in Tauri
+    if (isTauri()) return;
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current) return;
       const deltaX = e.clientX - dragStartRef.current.mouseX;

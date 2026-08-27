@@ -10,6 +10,7 @@ import { Site } from "./types";
 import { siteService } from "./services/siteService";
 import { Plus, Server } from "lucide-react";
 import { useWidgetDrag } from "./hooks/useWidgetDrag";
+import { isTauri } from "./services/tauriClient";
 
 const ACTIVE_SITE_KEY = "ai_gateway_desk_active_site_id";
 
@@ -108,18 +109,24 @@ export function App() {
     }
   };
 
+  const inTauri = isTauri();
+
   return (
     <div
       style={{ opacity: (settings.opacity_pct ?? 100) / 100 }}
-      className="w-screen h-screen overflow-hidden bg-transparent select-none p-2 flex items-center justify-center relative"
+      className={`w-screen h-screen overflow-hidden bg-transparent select-none flex items-center justify-center relative ${
+        inTauri ? "p-0" : "p-3"
+      }`}
     >
-      {/* Centered Floating Widget Container (Fixed 350px x 560px in web preview, fits native exe window) */}
+      {/* Widget Container (Fills native Tauri window, centered mockup in web preview) */}
       <div
         style={{
-          transform: position ? `translate(${position.x}px, ${position.y}px)` : undefined,
+          transform: !inTauri && position ? `translate(${position.x}px, ${position.y}px)` : undefined,
         }}
         onMouseDown={handleStartDrag}
-        className="w-full h-full max-w-[360px] max-h-[570px] flex flex-col relative"
+        className={`w-full h-full flex flex-col relative ${
+          !inTauri ? "max-w-[350px] max-h-[560px]" : ""
+        }`}
       >
         {sites.length === 0 ? (
           /* Empty State Welcome Card */

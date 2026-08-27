@@ -46,19 +46,24 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
   const [testError, setTestError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const handleTestConnection = async () => {
-    if (!authToken.trim() && !adminToken.trim()) {
-      setTestError("请先输入 API Token 或 管理 Token");
-      return;
+  const normalizeUrl = (raw: string) => {
+    let clean = raw.trim().replace(/\/+$/, "");
+    if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+      clean = `https://${clean}`;
     }
+    return clean;
+  };
+
+  const handleTestConnection = async () => {
+    if (!baseUrl.trim()) return;
     setTesting(true);
     setTestError(null);
     setTestedCaps(null);
     try {
       const caps = await siteService.testConnection({
         provider,
-        base_url: baseUrl,
-        auth_token: authToken,
+        base_url: normalizeUrl(baseUrl),
+        auth_token: authToken.trim(),
         admin_token: adminToken.trim() || undefined,
       });
       setTestedCaps(caps);
@@ -74,12 +79,13 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
     if (!name.trim() || !baseUrl.trim()) return;
     setSaving(true);
     try {
+      const cleanUrl = normalizeUrl(baseUrl);
       const payload: SaveSiteRequest = {
         id: site?.id,
-        name,
+        name: name.trim(),
         provider,
-        base_url: baseUrl,
-        auth_token: authToken,
+        base_url: cleanUrl,
+        auth_token: authToken.trim(),
         admin_token: adminToken.trim() || undefined,
         enabled,
       };

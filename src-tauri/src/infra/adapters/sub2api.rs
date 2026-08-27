@@ -24,9 +24,13 @@ pub struct Sub2ApiAdapter {
 impl Sub2ApiAdapter {
     /// Creates a new Sub2ApiAdapter instance.
     pub fn new(site_id: Uuid, base_url: String, token: String) -> Self {
+        let mut clean_url = base_url.trim().trim_end_matches('/').to_string();
+        if !clean_url.starts_with("http://") && !clean_url.starts_with("https://") {
+            clean_url = format!("https://{}", clean_url);
+        }
         Self {
             site_id,
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url: clean_url,
             token,
             http: HttpClient::new(),
         }
