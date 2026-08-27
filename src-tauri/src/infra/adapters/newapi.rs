@@ -61,66 +61,82 @@ impl NewApiAdapter {
     }
 
     /// Extracts balance and currency from various JSON responses.
+    /// Never returns "unlimited" sentinel — only real numeric balances.
     fn extract_balance(json: &Value) -> Option<(f64, String)> {
         let target = json.get("data").unwrap_or(json);
         let curr = target.get("currency")
             .or_else(|| json.get("currency"))
             .and_then(|c| c.as_str())
+            .filter(|s| !s.is_empty())
             .unwrap_or("CNY")
             .to_string();
 
-        // 1. Direct candidate fields in target / json / user / account
-        let sub_obj = target.get("user").or_else(|| target.get("account"));
-        let candidates = [
-            target.get("quota"),
-            target.get("remain_quota"),
-            target.get("balance"),
-            target.get("current_balance"),
-            target.get("total_quota"),
-            sub_obj.and_then(|u| u.get("quota")),
-            sub_obj.and_then(|u| u.get("balance")),
-            json.get("quota"),
-            json.get("remain_quota"),
-            json.get("balance"),
-        ];
-
-        for val in candidates.into_iter().flatten() {
-            if let Some(q) = Self::extract_num(val) {
+        // --- Priority 1: User-account object (from /api/user/self, /api/user/wallet) ---
+        // quota field in New-API = remaining quota in raw points
+        // We compute remaining = quota - used_quota OR just take quota if > 0
+        if let Some(q) = Self::extract_num(target.get("quota").unwrap_or(&Value::Null)) {
+            if q > 0.0 {
+                return Some((Self::convert_quota_to_balance(q), curr));
+            }
+            // quota exists (even if 0): also check remain_quota override
+        }
+        for key in &["remain_quota", "balance", "current_balance"] {
+            if let Some(q) = target.get(key).and_then(Self::extract_num) {
                 if q > 0.0 {
                     return Some((Self::convert_quota_to_balance(q), curr));
                 }
             }
         }
 
-        // 2. Token lists (find explicit token with positive quota)
-        let list = if let Some(arr) = json.as_array() {
-            Some(arr)
-        } else if let Some(arr) = json.get("data").and_then(|d| d.as_array()) {
-            Some(arr)
-        } else if let Some(arr) = json.get("data").and_then(|d| d.get("items")).and_then(|i| i.as_array()) {
-            Some(arr)
-        } else if let Some(arr) = json.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()) {
-            Some(arr)
-        } else {
-            None
-        };
-
-        if let Some(items) = list {
-            for item in items {
-                let item_quota = item.get("remain_quota")
-                    .or_else(|| item.get("quota"))
-                    .or_else(|| item.get("balance"))
-                    .and_then(Self::extract_num);
-                if let Some(q) = item_quota {
+        // Sub-object: data.user or data.account (some gateways nest here)
+        if let Some(sub) = target.get("user").or_else(|| target.get("account")) {
+            for key in &["quota", "remain_quota", "balance"] {
+                if let Some(q) = sub.get(key).and_then(Self::extract_num) {
                     if q > 0.0 {
-                        let token_curr = item.get("currency").and_then(|c| c.as_str()).unwrap_or(&curr).to_string();
-                        return Some((Self::convert_quota_to_balance(q), token_curr));
+                        let sub_curr = sub.get("currency")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or(&curr)
+                            .to_string();
+                        return Some((Self::convert_quota_to_balance(q), sub_curr));
                     }
                 }
             }
         }
 
-        // 3. OpenAI billing subscription style
+        // Top-level json (non-nested response)
+        for key in &["quota", "remain_quota", "balance"] {
+            if let Some(q) = json.get(key).and_then(Self::extract_num) {
+                if q > 0.0 {
+                    return Some((Self::convert_quota_to_balance(q), curr));
+                }
+            }
+        }
+
+        // --- Priority 2: Token-list array (from /api/token/) ---
+        // Read the token's own remain_quota.
+        // NOTE: ignore unlimited_quota flag entirely — only use actual numeric values.
+        let list = json.as_array()
+            .or_else(|| json.get("data").and_then(|d| d.as_array()))
+            .or_else(|| json.get("data").and_then(|d| d.get("items")).and_then(|i| i.as_array()))
+            .or_else(|| json.get("data").and_then(|d| d.get("list")).and_then(|l| l.as_array()));
+
+        if let Some(items) = list {
+            for item in items {
+                for key in &["remain_quota", "quota", "balance"] {
+                    if let Some(q) = item.get(key).and_then(Self::extract_num) {
+                        if q > 0.0 {
+                            let token_curr = item.get("currency")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or(&curr)
+                                .to_string();
+                            return Some((Self::convert_quota_to_balance(q), token_curr));
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Priority 3: OpenAI billing subscription style ---
         let hard_limit = json.get("hard_limit_usd")
             .or_else(|| json.get("system_hard_limit_usd"))
             .or_else(|| json.get("total_available"))
@@ -129,14 +145,12 @@ impl NewApiAdapter {
         if let Some(limit) = hard_limit {
             let total_usage = json.get("total_usage").and_then(Self::extract_num).unwrap_or(0.0);
             let raw_balance = (limit - total_usage).max(0.0);
-            return Some((Self::convert_quota_to_balance(raw_balance), "USD".to_string()));
+            if raw_balance > 0.0 {
+                return Some((Self::convert_quota_to_balance(raw_balance), "USD".to_string()));
+            }
         }
 
-        // 4. True unlimited account indicator
-        if let Some(true) = target.get("unlimited_quota").or_else(|| json.get("unlimited_quota")).and_then(|v| v.as_bool()) {
-            return Some((-1.0, curr));
-        }
-
+        // No real numeric balance found — do NOT return unlimited sentinel
         None
     }
 
@@ -349,21 +363,28 @@ impl GatewayAdapter for NewApiAdapter {
         for path in &endpoints {
             let url = self.build_url(path);
             let tok = token.clone();
-            if let Ok(resp) = self.http.execute_with_retry(move |c| {
-                c.get(&url)
-                    .header("Authorization", format!("Bearer {}", tok))
-                    .header("Accept", "application/json, text/plain, */*")
-            }).await {
-                if resp.status().is_success() {
-                    if let Ok(json) = resp.json::<Value>().await {
-                        if let Some((bal, curr)) = Self::extract_balance(&json) {
-                            return Ok(BalanceInfo {
-                                balance: Some(bal),
-                                currency: curr,
-                                total_quota: None,
-                                expires_at: None,
-                            });
+            // Try with Bearer prefix first, then raw token (some New-API versions accept both)
+            for auth_value in &[format!("Bearer {}", tok), tok.clone()] {
+                let auth = auth_value.clone();
+                if let Ok(resp) = self.http.execute_with_retry(move |c| {
+                    c.get(&url)
+                        .header("Authorization", &auth)
+                        .header("Accept", "application/json, text/plain, */*")
+                        .header("New-API-User", "1")
+                }).await {
+                    if resp.status().is_success() {
+                        if let Ok(json) = resp.json::<Value>().await {
+                            if let Some((bal, curr)) = Self::extract_balance(&json) {
+                                return Ok(BalanceInfo {
+                                    balance: Some(bal),
+                                    currency: curr,
+                                    total_quota: None,
+                                    expires_at: None,
+                                });
+                            }
                         }
+                    } else if resp.status().as_u16() == 401 {
+                        break; // Both auth methods will fail for this endpoint, try next
                     }
                 }
             }
