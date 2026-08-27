@@ -85,7 +85,7 @@ impl RefreshService {
             let window_rst = window_info.as_ref().and_then(|w| w.reset_at);
 
             let new_balance = bal_info.as_ref().and_then(|b| b.balance).or(site.current_balance);
-            let new_currency = bal_info.map(|b| b.currency).unwrap_or(site.currency);
+            let new_currency = bal_info.map(|b| b.currency).unwrap_or_else(|| site.currency.clone());
 
             site.record_success(new_balance, Some(new_currency), window_rem, window_rst);
             repo.save(&site)?;

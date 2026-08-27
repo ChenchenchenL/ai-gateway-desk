@@ -20,7 +20,18 @@ pub struct SiteCapabilities {
 }
 
 impl SiteCapabilities {
-    /// Standard capabilities for One-API / New-API relay platforms.
+    /// Standard capabilities for New-API relay platforms.
+    pub fn new_api_default() -> Self {
+        Self {
+            balance: true,
+            usage: true,
+            model_usage: true,
+            cache_usage: true,
+            window_quota: false,
+        }
+    }
+
+    /// Standard capabilities for One-API relay platforms.
     pub fn one_api_default() -> Self {
         Self {
             balance: true,
