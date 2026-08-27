@@ -21,13 +21,29 @@ function apiProxyPlugin(): Plugin {
           return;
         }
 
-        const authHeader = req.headers["authorization"] || "";
+        let authHeader = (req.headers["authorization"] as string) || "";
         const headersArgs: string[] = [
           "-H", "User-Agent: AI-Gateway-Desk-Web/0.1.0",
           "-H", "Accept: application/json, text/plain, */*",
         ];
         if (authHeader) {
-          headersArgs.push("-H", `Authorization: ${authHeader}`);
+          let token = authHeader.trim();
+          if (token.toLowerCase().startsWith("bearer ")) {
+            token = token.slice(7).trim();
+          }
+          if (
+            (token.startsWith('"') && token.endsWith('"')) ||
+            (token.startsWith("'") && token.endsWith("'")) ||
+            (token.startsWith("`") && token.endsWith("`"))
+          ) {
+            token = token.slice(1, -1).trim();
+          }
+          if (token.toLowerCase().startsWith("bearer ")) {
+            token = token.slice(7).trim();
+          }
+          if (token) {
+            headersArgs.push("-H", `Authorization: Bearer ${token}`);
+          }
         }
 
         execFile(

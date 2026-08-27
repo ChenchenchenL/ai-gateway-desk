@@ -43,7 +43,7 @@ function getStoredTokens(): Record<string, string> {
 function saveToken(siteId: string, token: string) {
   if (typeof window === "undefined") return;
   const tokens = getStoredTokens();
-  tokens[siteId] = token;
+  tokens[siteId] = cleanToken(token);
   localStorage.setItem(STORAGE_TOKENS_KEY, JSON.stringify(tokens));
 }
 
@@ -59,7 +59,7 @@ function getStoredAdminTokens(): Record<string, string> {
 function saveAdminToken(siteId: string, token: string) {
   if (typeof window === "undefined") return;
   const tokens = getStoredAdminTokens();
-  tokens[siteId] = token;
+  tokens[siteId] = cleanToken(token);
   localStorage.setItem(STORAGE_ADMIN_TOKENS_KEY, JSON.stringify(tokens));
 }
 
@@ -336,14 +336,45 @@ function extractCacheWriteTokens(item: Record<string, unknown>): number {
 }
 
 /**
+ * Cleans token strings by stripping 'Bearer ' prefixes, outer quotation marks, and whitespace.
+ */
+export function cleanToken(token?: string | null): string {
+  if (!token) return "";
+  let t = token.trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'")) ||
+    (t.startsWith("`") && t.endsWith("`"))
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+  if (t.toLowerCase().startsWith("bearer ")) {
+    t = t.slice(7).trim();
+  }
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'")) ||
+    (t.startsWith("`") && t.endsWith("`"))
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+  return t;
+}
+
+/**
  * Bypasses CORS in browser development via local Vite proxy.
  */
 async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
+  const pureToken = cleanToken(token);
+  const authHeader = pureToken ? `Bearer ${pureToken}` : "";
+  const headers: Record<string, string> = {};
+  if (authHeader) {
+    headers["Authorization"] = authHeader;
+  }
+
   const proxyUrl = `/__api_proxy?url=${encodeURIComponent(targetUrl)}`;
   try {
-    const res = await fetch(proxyUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(proxyUrl, { headers });
     if (res.status !== 404 && res.status !== 502) {
       return res;
     }
@@ -351,7 +382,7 @@ async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
     // fallback
   }
   return await fetch(targetUrl, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers,
     mode: "cors",
   });
 }
