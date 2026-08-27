@@ -141,10 +141,18 @@ function convertQuotaToBalance(rawQuota: number): number {
 
 /**
  * Extracts balance and currency from all common OneAPI / NewAPI / Sub2API responses.
+ * @param skipQuotaConversion - set true for Sub2API where balance is already a USD float
  */
-function extractBalanceFromJson(json: unknown, defaultCurrency = "USD"): { balance?: number; currency?: string; isUnlimited?: boolean } {
+function extractBalanceFromJson(
+  json: unknown,
+  defaultCurrency = "USD",
+  skipQuotaConversion = false
+): { balance?: number; currency?: string; isUnlimited?: boolean } {
   if (!json || typeof json !== "object") return {};
   const obj = json as Record<string, unknown>;
+  const convert = skipQuotaConversion
+    ? (v: number) => Number(v.toFixed(4))
+    : convertQuotaToBalance;
 
   const list = (Array.isArray(json)
     ? json
@@ -164,7 +172,7 @@ function extractBalanceFromJson(json: unknown, defaultCurrency = "USD"): { balan
       const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
       if (typeof itemQuota === "number") {
         return {
-          balance: convertQuotaToBalance(itemQuota),
+          balance: convert(itemQuota),
           currency: String(item?.currency || defaultCurrency),
         };
       }
@@ -181,14 +189,14 @@ function extractBalanceFromJson(json: unknown, defaultCurrency = "USD"): { balan
     target.currency || obj.currency || (target.symbol === "¥" || obj.symbol === "¥" ? "CNY" : (target.symbol === "$" || obj.symbol === "$" ? "USD" : defaultCurrency))
   );
 
-  // Sub2API user profile object { user: { balance: 0 } }
+  // Sub2API user profile object { data: { balance: 0.00, ... } } — balance is direct USD
   const userObj = (target.user || target.account) as Record<string, unknown> | undefined;
   if (userObj && typeof userObj.balance === "number") {
-    return { balance: userObj.balance, currency: detectedCurrency };
+    return { balance: convert(userObj.balance), currency: detectedCurrency };
   }
 
   if (typeof target.balance === "number") {
-    return { balance: convertQuotaToBalance(target.balance), currency: detectedCurrency };
+    return { balance: convert(target.balance), currency: detectedCurrency };
   }
 
   const candidates = [
@@ -204,14 +212,14 @@ function extractBalanceFromJson(json: unknown, defaultCurrency = "USD"): { balan
 
   for (const val of candidates) {
     if (typeof val === "number") {
-      return { balance: convertQuotaToBalance(val), currency: detectedCurrency };
+      return { balance: convert(val), currency: detectedCurrency };
     }
   }
 
   const hardLimit = (obj.hard_limit_usd ?? obj.system_hard_limit_usd ?? obj.total_available) as number | undefined;
   if (typeof hardLimit === "number" && hardLimit > 0) {
     const totalUsage = typeof obj.total_usage === "number" ? obj.total_usage : 0;
-    return { balance: convertQuotaToBalance(Math.max(0, hardLimit - totalUsage)), currency: detectedCurrency };
+    return { balance: convert(Math.max(0, hardLimit - totalUsage)), currency: detectedCurrency };
   }
 
   return {};
@@ -367,19 +375,26 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   const newLogs: StoredLog[] = [];
 
   // 1. Balance & Profile Endpoint Candidates
+  //
+  // Sub2API auth model (from source analysis of Wei-Shaw/sub2api):
+  //   - sk-xxx API Key  → /v1/sub2api/billing only (returns rate multiplier, NOT balance)
+  //   - JWT session token → /api/v1/user/profile (returns { data: { balance: <USD float> } })
+  //                       → /api/v1/usage (returns usage records list)
+  // Convention: authToken = JWT session token; adminToken = sk-xxx API Key.
   const balanceEndpoints: { url: string; token: string }[] = [];
 
   if (site.provider === "sub2_api") {
-    const token = authToken || adminToken || "";
-    balanceEndpoints.push(
-      { url: `${baseUrl}/v1/sub2api/billing`, token },
-      { url: `${baseUrl}/api/v1/auth/me`, token: adminToken || token },
-      { url: `${baseUrl}/api/v1/user`, token: adminToken || token },
-      { url: `${baseUrl}/api/v1/subscriptions`, token: adminToken || token },
-      { url: `${baseUrl}/api/v1/keys`, token: adminToken || token },
-      { url: `${baseUrl}/api/user/info`, token },
-      { url: `${baseUrl}/api/user/profile`, token }
-    );
+    // JWT token: can retrieve user balance
+    if (authToken) {
+      balanceEndpoints.push(
+        { url: `${baseUrl}/api/v1/user/profile`, token: authToken }
+      );
+    }
+    // sk-key: can only retrieve billing rate info (not balance), try anyway
+    const apiKey = adminToken || authToken || "";
+    if (apiKey) {
+      balanceEndpoints.push({ url: `${baseUrl}/v1/sub2api/billing`, token: apiKey });
+    }
   } else {
     if (adminToken) {
       balanceEndpoints.push(
@@ -407,7 +422,11 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
         const json = await res.json();
         console.log(`[AI Gateway Desk] Balance success from ${item.url}:`, json);
 
-        const extracted = extractBalanceFromJson(json, site.provider === "sub2_api" ? "USD" : "CNY");
+        const extracted = extractBalanceFromJson(
+          json,
+          site.provider === "sub2_api" ? "USD" : "CNY",
+          site.provider === "sub2_api" // Sub2API balance is direct USD, not quota points
+        );
         if (extracted.isUnlimited) {
           balance = 999999;
           currency = extracted.currency || currency;
@@ -425,52 +444,41 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
   }
 
   // 2. Sub2API Window Quota
-  if (site.provider === "sub2_api") {
-    const token = authToken || adminToken || "";
-    const windowEndpoints = [
-      `${baseUrl}/v1/sub2api/billing`,
-      `${baseUrl}/api/v1/subscriptions`,
-      `${baseUrl}/api/window`,
-      `${baseUrl}/api/v1/window`,
-      `${baseUrl}/api/user/window`,
-      `${baseUrl}/api/limits`,
-    ];
-    for (const url of windowEndpoints) {
-      try {
-        const res = await proxyFetch(url, token);
-        if (res.ok) {
-          const json = await res.json();
-          console.log(`[AI Gateway Desk] Window quota success from ${url}:`, json);
-          const dataObj = (json?.data && typeof json.data === "object" ? json.data : json) as Record<string, unknown>;
-          const remaining = (dataObj?.remaining_quota ?? dataObj?.quota_remaining ?? dataObj?.window_remaining) as number | undefined;
+  // /api/v1/subscriptions requires JWT token (not sk- key)
+  // /api/v1/user/profile also includes subscription quota info
+  if (site.provider === "sub2_api" && authToken) {
+    try {
+      const res = await proxyFetch(`${baseUrl}/api/v1/subscriptions`, authToken);
+      if (res.ok) {
+        const json = await res.json();
+        console.log(`[AI Gateway Desk] Sub2API subscriptions:`, json);
+        const items = (Array.isArray(json?.data) ? json.data : []) as Record<string, unknown>[];
+        for (const sub of items) {
+          const remaining = sub?.remaining_quota ?? sub?.quota_remaining;
           if (typeof remaining === "number") {
             windowRemainingQuota = remaining;
           }
-          if (dataObj?.reset_at) {
-            windowResetAt = parseLogTimestamp(dataObj.reset_at);
+          if (sub?.reset_at || sub?.expires_at) {
+            windowResetAt = parseLogTimestamp(sub.reset_at ?? sub.expires_at);
           }
-          break;
         }
-      } catch {
-        // ignore
       }
+    } catch {
+      // ignore
     }
   }
 
-  // 3. Intelligent Log Endpoint Candidates
+  // 3. Log Endpoint Candidates
+  // Sub2API: /api/v1/usage requires JWT token
+  // New-API: /api/log/self requires user access token
   const logCandidates: { path: string; token: string }[] = [];
 
   if (site.provider === "sub2_api") {
-    const token = adminToken || authToken || "";
-    logCandidates.push(
-      { path: "/api/v1/usage", token },
-      { path: "/api/v1/usage?page_size=100", token },
-      { path: "/api/v1/logs", token },
-      { path: "/api/log", token },
-      { path: "/api/v1/log", token },
-      { path: "/api/log/self", token },
-      { path: "/api/log/token", token }
-    );
+    if (authToken) {
+      // JWT token: full usage history
+      logCandidates.push({ path: "/api/v1/usage", token: authToken });
+      logCandidates.push({ path: "/api/v1/usage/errors", token: authToken });
+    }
   } else {
     if (adminToken) {
       logCandidates.push({ path: "/api/log/self", token: adminToken });
@@ -483,9 +491,14 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
 
   for (const candidate of logCandidates) {
     let candidateSuccessful = false;
+    const isSub2Api = site.provider === "sub2_api";
+    const pageParamName = isSub2Api ? "page" : "p";
+    const pageStart = isSub2Api ? 1 : 0;
 
-    for (let page = 0; page < 10; page++) {
-      const pageUrl = `${baseUrl}${candidate.path}${candidate.path.includes("?") ? "&" : "?"}page_size=100&p=${page}`;
+    for (let pageIdx = 0; pageIdx < 10; pageIdx++) {
+      const pageNum = pageStart + pageIdx;
+      const sep = candidate.path.includes("?") ? "&" : "?";
+      const pageUrl = `${baseUrl}${candidate.path}${sep}page_size=100&${pageParamName}=${pageNum}`;
       try {
         const res = await proxyFetch(pageUrl, candidate.token);
         if (!res.ok) {
@@ -495,10 +508,10 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
         const json = await res.json();
         const rawItems = (Array.isArray(json)
           ? json
-          : Array.isArray(json?.data)
-          ? json.data
           : Array.isArray(json?.data?.items)
           ? json.data.items
+          : Array.isArray(json?.data)
+          ? json.data
           : Array.isArray(json?.data?.list)
           ? json.data.list
           : Array.isArray(json?.data?.rows)
@@ -509,19 +522,31 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
         candidateSuccessful = true;
 
         for (const rawItem of rawItems) {
+          // Sub2API uses "model" field; New-API uses "model_name"
+          const modelName = String(rawItem.model_name ?? rawItem.model ?? "unknown");
+          // Sub2API has cache_creation_tokens as a direct field;
+          // New-API stores cache write in item.other JSON, so use recursive extractor
+          const cacheWriteTokens = isSub2Api
+            ? Number(rawItem.cache_write_tokens ?? rawItem.cache_creation_tokens ?? rawItem.cache_creation_input_tokens ?? 0)
+            : extractCacheWriteTokens(rawItem);
           newLogs.push({
             id: String(rawItem.id || rawItem.record_id || `${rawItem.created_at || rawItem.timestamp}_${Math.random().toString(36).slice(2)}`),
             site_id: site.id,
             timestamp: parseLogTimestamp(rawItem.created_at ?? rawItem.timestamp ?? rawItem.time ?? rawItem.created),
-            model_name: String(rawItem.model_name ?? rawItem.model ?? "unknown"),
-            input_tokens: Number(rawItem.prompt_tokens ?? rawItem.input_tokens ?? rawItem.prompt ?? 0),
-            output_tokens: Number(rawItem.completion_tokens ?? rawItem.output_tokens ?? rawItem.completion ?? 0),
-            cache_read_tokens: extractCacheReadTokens(rawItem),
-            cache_write_tokens: extractCacheWriteTokens(rawItem),
+            model_name: modelName,
+            input_tokens: Number(rawItem.input_tokens ?? rawItem.prompt_tokens ?? rawItem.prompt ?? 0),
+            output_tokens: Number(rawItem.output_tokens ?? rawItem.completion_tokens ?? rawItem.completion ?? 0),
+            cache_read_tokens: isSub2Api
+              ? Number(rawItem.cache_read_tokens ?? 0)
+              : extractCacheReadTokens(rawItem),
+            cache_write_tokens: cacheWriteTokens,
           });
         }
 
-        if (rawItems.length < 100) break;
+        const totalPages = isSub2Api
+          ? (json?.data as Record<string, unknown>)?.pages
+          : undefined;
+        if (rawItems.length < 100 || (typeof totalPages === "number" && pageNum >= totalPages)) break;
       } catch {
         break;
       }
