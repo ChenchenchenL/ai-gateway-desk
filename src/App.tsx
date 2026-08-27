@@ -6,6 +6,7 @@ import { useSites } from "./hooks/useSites";
 import { useRefresh } from "./hooks/useRefresh";
 import { useSettings } from "./hooks/useSettings";
 import { Site } from "./types";
+import { siteService } from "./services/siteService";
 import { Plus, Server } from "lucide-react";
 
 const ACTIVE_SITE_KEY = "ai_gateway_desk_active_site_id";
@@ -61,6 +62,35 @@ export function App() {
     setIsFormOpen(true);
   };
 
+  const handleEditSite = (site: Site) => {
+    setEditingSite(site);
+    setIsFormOpen(true);
+  };
+
+  const handleDeleteSite = async (siteId: string) => {
+    const siteToDelete = sites.find((s) => s.id === siteId);
+    if (!siteToDelete) return;
+    if (!window.confirm(`确定要删除站点 "${siteToDelete.name}" 吗？`)) return;
+    try {
+      await siteService.deleteSite(siteId);
+      await refreshList();
+      const remaining = sites.filter((s) => s.id !== siteId);
+      if (remaining.length > 0) {
+        setActiveSiteId(remaining[0].id);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(ACTIVE_SITE_KEY, remaining[0].id);
+        }
+      } else {
+        setActiveSiteId("");
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(ACTIVE_SITE_KEY);
+        }
+      }
+    } catch (err) {
+      console.error("Delete site error:", err);
+    }
+  };
+
   return (
     <div
       style={{ opacity: (settings.opacity_pct ?? 100) / 100 }}
@@ -98,6 +128,8 @@ export function App() {
           sites={sites}
           onSelectSite={handleSelectSite}
           onAddSite={handleOpenAdd}
+          onEditSite={handleEditSite}
+          onDeleteSite={handleDeleteSite}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onRefresh={refreshAll}
           refreshing={refreshing}

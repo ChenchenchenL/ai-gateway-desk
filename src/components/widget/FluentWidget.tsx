@@ -15,6 +15,8 @@ interface FluentWidgetProps {
   sites: Site[];
   onSelectSite: (site: Site) => void;
   onAddSite: () => void;
+  onEditSite: (site: Site) => void;
+  onDeleteSite: (siteId: string) => void;
   onOpenSettings: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -30,6 +32,8 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
   sites,
   onSelectSite,
   onAddSite,
+  onEditSite,
+  onDeleteSite,
   onOpenSettings,
   onRefresh,
   refreshing,
@@ -71,6 +75,8 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
         sites={sites}
         onSelectSite={onSelectSite}
         onAddSite={onAddSite}
+        onEditSite={onEditSite}
+        onDeleteSite={onDeleteSite}
         onOpenSettings={onOpenSettings}
         onRefresh={onRefresh}
         refreshing={refreshing}

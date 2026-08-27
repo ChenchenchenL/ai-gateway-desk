@@ -749,6 +749,15 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       sites = sites.filter((s) => s.id !== id);
       saveStoredSites(sites);
       localStorage.removeItem(STORAGE_LOGS_PREFIX + id);
+
+      const curTokens = getStoredTokens();
+      delete curTokens[id];
+      localStorage.setItem(STORAGE_TOKENS_KEY, JSON.stringify(curTokens));
+
+      const curAdminTokens = getStoredAdminTokens();
+      delete curAdminTokens[id];
+      localStorage.setItem(STORAGE_ADMIN_TOKENS_KEY, JSON.stringify(curAdminTokens));
+
       return undefined as T;
     }
 
