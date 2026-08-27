@@ -27,3 +27,4 @@ export interface ModelUsageMetrics {
  * Time range filter preset.
  */
 export type TimeRangePreset = "today" | "24h" | "7d" | "30d" | "custom";
+export type TimePreset = "today" | "24h" | "7d" | "30d";
