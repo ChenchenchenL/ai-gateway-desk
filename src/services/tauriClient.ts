@@ -146,7 +146,8 @@ function convertQuotaToBalance(rawQuota: number): number {
 function extractBalanceFromJson(
   json: unknown,
   defaultCurrency = "USD",
-  skipQuotaConversion = false
+  skipQuotaConversion = false,
+  userToken = ""
 ): { balance?: number; currency?: string; isUnlimited?: boolean } {
   if (!json || typeof json !== "object") return {};
   const obj = json as Record<string, unknown>;
@@ -165,10 +166,24 @@ function extractBalanceFromJson(
     : []) as Record<string, unknown>[];
 
   if (list.length > 0) {
+    const cleanUserTok = cleanToken(userToken);
+    // 1. Try to find exact matching token by key
     for (const item of list) {
-      if (item?.unlimited_quota === true) {
-        return { isUnlimited: true, currency: defaultCurrency };
+      const keyStr = String(item?.key || "").trim();
+      const matches = cleanUserTok && keyStr && (keyStr === cleanUserTok || cleanUserTok.includes(keyStr) || keyStr.includes(cleanUserTok));
+      if (matches) {
+        const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
+        if (typeof itemQuota === "number") {
+          return {
+            balance: convert(itemQuota),
+            currency: String(item?.currency || defaultCurrency),
+          };
+        }
       }
+    }
+
+    // 2. Otherwise take first token with numerical quota
+    for (const item of list) {
       const itemQuota = item?.remain_quota ?? item?.quota ?? item?.balance;
       if (typeof itemQuota === "number") {
         return {
@@ -362,16 +377,34 @@ export function cleanToken(token?: string | null): string {
 }
 
 /**
- * Bypasses CORS in browser development via local Vite proxy.
+ * Bypasses CORS in browser development and delegates to Rust proxy_http_get when running in Tauri.
  */
-async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
+async function proxyFetch(targetUrl: string, token: string): Promise<{ ok: boolean; status: number; json: () => Promise<any> }> {
   const pureToken = cleanToken(token);
-  const authHeader = pureToken ? `Bearer ${pureToken}` : "";
-  const headers: Record<string, string> = {};
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
+  const headers: Record<string, string> = {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": "AI-Gateway-Desk/0.1.0",
+  };
+  if (pureToken) {
+    headers["Authorization"] = `Bearer ${pureToken}`;
   }
 
+  // 1. If in Tauri .exe, use Rust proxy_http_get to completely bypass CORS & WebView network restrictions
+  if (isTauri()) {
+    try {
+      const text = await invoke<string>("proxy_http_get", { url: targetUrl, headers });
+      const parsed = JSON.parse(text);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => parsed,
+      };
+    } catch (e) {
+      console.warn("[AI Gateway Desk] Tauri proxy_http_get error, fallback to webview fetch:", e);
+    }
+  }
+
+  // 2. If in web development mode, try Vite dev proxy
   const proxyUrl = `/__api_proxy?url=${encodeURIComponent(targetUrl)}`;
   try {
     const res = await fetch(proxyUrl, { headers });
@@ -381,11 +414,11 @@ async function proxyFetch(targetUrl: string, token: string): Promise<Response> {
   } catch {
     // fallback
   }
-  return await fetch(targetUrl, {
-    headers,
-    mode: "cors",
-  });
+
+  // 3. Direct browser fetch
+  return await fetch(targetUrl, { headers, mode: "cors" });
 }
+
 
 /**
  * Real in-browser fetch querying balance, window quota and multi-page logs from upstream gateway.
@@ -458,7 +491,8 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
         const extracted = extractBalanceFromJson(
           json,
           site.provider === "sub2_api" ? "USD" : "CNY",
-          site.provider === "sub2_api" // Sub2API balance is direct USD, not quota points
+          site.provider === "sub2_api", // Sub2API balance is direct USD, not quota points
+          authToken
         );
         if (extracted.isUnlimited) {
           balance = 999999;
@@ -600,16 +634,18 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
  * Universal safe invoke gateway.
  */
 export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (isTauri()) {
+  // Native window & platform controls pass through directly to Tauri runtime
+  const nativeWindowCommands = ["drag_window", "set_always_on_top", "hide_to_tray", "show_window"];
+  if (isTauri() && nativeWindowCommands.includes(cmd)) {
     try {
       return await invoke<T>(cmd, args);
-    } catch (err) {
-      throw err;
+    } catch {
+      return undefined as T;
     }
   }
 
   // -------------------------------------------------------------
-  // Pure Web Browser Mode (Real Fetch + LocalStorage Aggregation)
+  // Universal Direct Web Engine (100% Identical in Web Browser & Packaged EXE)
   // -------------------------------------------------------------
   let sites = getStoredSites();
   const tokens = getStoredTokens();

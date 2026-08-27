@@ -1,9 +1,29 @@
-//! Refresh Tauri commands
-
+use std::collections::HashMap;
 use tauri::{command, State};
 use uuid::Uuid;
 
 use crate::AppState;
+
+/// Performs direct HTTP GET request on behalf of frontend.
+#[command]
+pub async fn proxy_http_get(url: String, headers: Option<HashMap<String, String>>) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut req = client.get(&url);
+    if let Some(hdrs) = headers {
+        for (k, v) in hdrs {
+            req = req.header(k, v);
+        }
+    }
+
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(text)
+}
 
 /// Triggers manual refresh for a single site.
 #[command]
