@@ -10,19 +10,12 @@ interface SiteFormModalProps {
   onSaved: () => void;
 }
 
-const PROVIDERS: { label: string; value: ProviderType; defaultUrl: string }[] = [
-  { label: "New-API 中转站 (推荐)", value: "new_api", defaultUrl: "https://api.new-api.com" },
-  { label: "One-API 中转站", value: "one_api", defaultUrl: "https://api.one-api.com" },
-  { label: "OpenAI 兼容网关", value: "openai_compatible", defaultUrl: "https://api.openai.com" },
-  { label: "Anthropic 兼容网关", value: "anthropic_compatible", defaultUrl: "https://api.anthropic.com" },
-];
-
 /**
  * Windows 11 Fluent Acrylic Modal for creating and editing monitored gateway sites.
  */
 export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onSaved }) => {
   const [name, setName] = useState(site?.name ?? "");
-  const [provider, setProvider] = useState<ProviderType>(site?.provider ?? "new_api");
+  const [provider] = useState<ProviderType>("new_api");
   const [baseUrl, setBaseUrl] = useState(site?.base_url ?? "https://");
   const [authToken, setAuthToken] = useState(() => {
     if (typeof window !== "undefined" && site?.id) {
@@ -52,14 +45,6 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
   const [testedCaps, setTestedCaps] = useState<SiteCapabilities | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  const handleProviderChange = (p: ProviderType) => {
-    setProvider(p);
-    const found = PROVIDERS.find((item) => item.value === p);
-    if (found && (!baseUrl || baseUrl === "https://" || baseUrl.includes("api."))) {
-      setBaseUrl(found.defaultUrl);
-    }
-  };
 
   const handleTestConnection = async () => {
     if (!authToken.trim() && !adminToken.trim()) {
@@ -141,17 +126,12 @@ export const SiteFormModal: React.FC<SiteFormModalProps> = ({ site, onClose, onS
 
           <div>
             <label className="block text-slate-700 font-semibold mb-1">协议类型</label>
-            <select
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value as ProviderType)}
-              className="w-full px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500 shadow-sm cursor-pointer"
-            >
-              {PROVIDERS.map((p) => (
-                <option key={p.value} value={p.value} className="bg-slate-900 text-slate-100">
-                  {p.label}
-                </option>
-              ))}
-            </select>
+            <div className="px-2.5 py-1.5 bg-slate-900/80 border border-white/15 rounded-xl text-slate-200 text-xs font-semibold flex items-center justify-between shadow-sm">
+              <span>New-API 统一中转网关</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 font-mono">
+                NEW-API
+              </span>
+            </div>
           </div>
 
           <div>
