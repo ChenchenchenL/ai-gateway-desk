@@ -1,7 +1,7 @@
 import React from "react";
 import { AggregatedMetrics } from "../../types";
 import { formatTokens } from "../../utils/formatters";
-import { ArrowDownLeft, ArrowUpRight, Zap, Database } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Zap, Activity } from "lucide-react";
 
 interface TokenBreakdownCardProps {
   metrics: AggregatedMetrics;
@@ -36,7 +36,7 @@ export const TokenBreakdownCard: React.FC<TokenBreakdownCardProps> = ({ metrics 
       <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg flex flex-col gap-1">
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
           <Zap className="w-3.5 h-3.5 text-amber-400" />
-          <span>缓存读取 (Hit)</span>
+          <span>缓存命中 (Cache)</span>
         </div>
         <span className="text-base font-semibold text-amber-300">
           {formatTokens(metrics.total_cache_read_tokens)}
@@ -45,11 +45,11 @@ export const TokenBreakdownCard: React.FC<TokenBreakdownCardProps> = ({ metrics 
 
       <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg flex flex-col gap-1">
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <Database className="w-3.5 h-3.5 text-purple-400" />
-          <span>缓存写入</span>
+          <Activity className="w-3.5 h-3.5 text-indigo-400" />
+          <span>请求次数</span>
         </div>
-        <span className="text-base font-semibold text-slate-300">
-          {formatTokens(metrics.total_cache_write_tokens)}
+        <span className="text-base font-semibold text-indigo-300">
+          {metrics.total_requests.toLocaleString()}
         </span>
       </div>
     </div>
