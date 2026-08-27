@@ -8,50 +8,60 @@ interface TokenBreakdownCardProps {
 }
 
 /**
- * Visual breakdown of token consumption and prompt cache volumes.
+ * Windows 11 Light Frosted Acrylic Token Breakdown Grid.
  */
 export const TokenBreakdownCard: React.FC<TokenBreakdownCardProps> = ({ metrics }) => {
+  const items = [
+    {
+      label: "输入 Tokens",
+      value: formatTokens(metrics.total_input_tokens),
+      icon: <ArrowDownLeft className="w-3.5 h-3.5" />,
+      colorClass: "text-sky-700",
+      iconBg: "bg-sky-500/10 text-sky-600 border border-sky-500/20",
+    },
+    {
+      label: "输出 Tokens",
+      value: formatTokens(metrics.total_output_tokens),
+      icon: <ArrowUpRight className="w-3.5 h-3.5" />,
+      colorClass: "text-emerald-700",
+      iconBg: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20",
+    },
+    {
+      label: "缓存命中",
+      value: formatTokens(metrics.total_cache_read_tokens),
+      icon: <Zap className="w-3.5 h-3.5" />,
+      colorClass: "text-amber-700",
+      iconBg: "bg-amber-500/10 text-amber-600 border border-amber-500/20",
+    },
+    {
+      label: "请求次数",
+      value: metrics.total_requests.toLocaleString(),
+      icon: <Activity className="w-3.5 h-3.5" />,
+      colorClass: "text-indigo-700",
+      iconBg: "bg-indigo-500/10 text-indigo-600 border border-indigo-500/20",
+    },
+  ];
+
   return (
-    <div className="grid grid-cols-2 gap-2">
-      <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <ArrowDownLeft className="w-3.5 h-3.5 text-blue-400" />
-          <span>输入 Tokens</span>
+    <div className="grid grid-cols-2 gap-2 select-none">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="fluent-card p-2 rounded-2xl flex flex-col justify-between shadow-xs transition"
+        >
+          <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
+            <div className={`p-1 rounded-lg ${item.iconBg}`}>
+              {item.icon}
+            </div>
+            <span className="truncate">{item.label}</span>
+          </div>
+          <div className="mt-1">
+            <span className={`text-base font-extrabold tabular-digits tracking-tight ${item.colorClass}`}>
+              {item.value}
+            </span>
+          </div>
         </div>
-        <span className="text-base font-semibold text-slate-100">
-          {formatTokens(metrics.total_input_tokens)}
-        </span>
-      </div>
-
-      <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
-          <span>输出 Tokens</span>
-        </div>
-        <span className="text-base font-semibold text-slate-100">
-          {formatTokens(metrics.total_output_tokens)}
-        </span>
-      </div>
-
-      <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <Zap className="w-3.5 h-3.5 text-amber-400" />
-          <span>缓存命中 (Cache)</span>
-        </div>
-        <span className="text-base font-semibold text-amber-300">
-          {formatTokens(metrics.total_cache_read_tokens)}
-        </span>
-      </div>
-
-      <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <Activity className="w-3.5 h-3.5 text-indigo-400" />
-          <span>请求次数</span>
-        </div>
-        <span className="text-base font-semibold text-indigo-300">
-          {metrics.total_requests.toLocaleString()}
-        </span>
-      </div>
+      ))}
     </div>
   );
 };

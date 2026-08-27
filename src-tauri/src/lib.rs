@@ -71,6 +71,25 @@ pub fn run() {
             // Spawn auto-refresh background ticker
             spawn_auto_refresh_loop(refresh_service, config_service);
 
+            // Enable native Mica / Acrylic glass effect on Windows or Vibrancy on macOS
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window_vibrancy::apply_acrylic(&window, Some((18, 22, 34, 120)))
+                        .or_else(|_| window_vibrancy::apply_mica(&window, Some(true)));
+                }
+
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = window_vibrancy::apply_vibrancy(
+                        &window,
+                        window_vibrancy::NSVisualEffectMaterial::UnderWindowBackground,
+                        None,
+                        None,
+                    );
+                }
+            }
+
             // Configure tray
             infra::tray::setup_tray(app.handle())?;
             Ok(())

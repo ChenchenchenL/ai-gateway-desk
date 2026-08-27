@@ -25,7 +25,7 @@ interface FluentWidgetProps {
 }
 
 /**
- * Windows 11 Fluent Design + Acrylic Glassmorphism Desktop Monitor Widget.
+ * Windows 11 Light Frosted Acrylic Desktop Monitor Widget.
  */
 export const FluentWidget: React.FC<FluentWidgetProps> = ({
   currentSite,
@@ -40,7 +40,6 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
   alwaysOnTop,
   onTogglePin,
 }) => {
-  // Preset defaults to '24h' as requested
   const [preset, setPreset] = useState<TimePreset>("24h");
   const [manualCompact, setManualCompact] = useState(false);
   const [isSmallContainer, setIsSmallContainer] = useState(false);
@@ -48,14 +47,12 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
   const { metrics, models } = useSiteStats(currentSite?.id, preset);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // ResizeObserver for Responsive Desktop Widget Layout (No CSS scale distortion)
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { height } = entry.contentRect;
-        // Auto compact when window height is strictly constrained (< 340px)
-        setIsSmallContainer(height < 340);
+        setIsSmallContainer(height < 300);
       }
     });
     observer.observe(containerRef.current);
@@ -69,7 +66,7 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
       ref={containerRef}
       className="acrylic-widget flex flex-col w-full h-full rounded-2xl overflow-hidden shadow-2xl relative select-none"
     >
-      {/* 1. Windows 11 Frameless Drag Bar / Header */}
+      {/* 1. Header Bar */}
       <WidgetHeader
         currentSite={currentSite}
         sites={sites}
@@ -86,7 +83,7 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
         onToggleCompact={() => setManualCompact(!manualCompact)}
       />
 
-      {/* 2. Body: Standard Expanded View vs Compact Strip */}
+      {/* 2. Main Content Body */}
       {isCompact ? (
         <CompactMiniWidget
           site={currentSite}
@@ -94,29 +91,29 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
           onExpand={() => setManualCompact(false)}
         />
       ) : (
-        <div className="p-3.5 flex flex-col gap-3 flex-1 overflow-hidden min-h-0">
-          {/* Hero: Balance & Window Quota */}
+        <div className="p-2 flex flex-col gap-1.5 flex-1 overflow-hidden min-h-0">
+          {/* A. Balance & Quota Hero Card */}
           <HeroBalanceCard site={currentSite} />
 
-          {/* Time Preset Bar (今日 | 24小时 | 7天 | 30天) */}
+          {/* B. Time Preset Bar */}
           <TimePresetBar preset={preset} onSelectPreset={setPreset} />
 
-          {/* 4-Metric Grid (Input, Output, Cache Hit, Requests) */}
+          {/* C. 4-Metrics Grid */}
           {metrics && <MetricsGridCard metrics={metrics} />}
 
-          {/* Prompt Cache Hit Rate Progress & Cost Savings */}
+          {/* D. Prompt Cache Efficiency */}
           <CacheProgressCard hitRatePct={metrics?.cache_hit_rate_pct} />
 
-          {/* Model Usage Ranking (Scrollable) */}
+          {/* E. Model Rank List */}
           <ModelRankSection models={models} />
 
-          {/* Subtle Glass Footer */}
+          {/* F. Footer Status */}
           <div
             data-tauri-drag-region
-            className="flex items-center justify-between pt-1 border-t border-black/[0.08] text-[10px] text-slate-600 font-medium select-none cursor-move shrink-0"
+            className="flex items-center justify-between pt-1 border-t border-indigo-100/60 text-[10px] text-slate-500 font-medium select-none cursor-move shrink-0"
           >
             <div className="flex items-center gap-1">
-              <Clock className="w-3 h-3 text-slate-500" />
+              <Clock className="w-3 h-3 text-slate-400" />
               <span>
                 最后同步：
                 {currentSite?.last_success_at
@@ -124,7 +121,7 @@ export const FluentWidget: React.FC<FluentWidgetProps> = ({
                   : "待同步"}
               </span>
             </div>
-            <span className="truncate max-w-[140px] text-slate-500">
+            <span className="truncate max-w-[130px] font-mono text-[9.5px] text-slate-400">
               {currentSite?.base_url?.replace(/^https?:\/\//, "")}
             </span>
           </div>

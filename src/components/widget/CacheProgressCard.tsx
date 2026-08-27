@@ -6,51 +6,51 @@ interface CacheProgressCardProps {
 }
 
 /**
- * Windows 11 Fluent Prompt Cache Efficiency Progress Glass Card.
- * Displays hit rate percentage, smooth dynamic gradient bar, formula note, and cost savings estimate.
+ * Windows 11 Light Frosted Acrylic Prompt Cache Efficiency Card (Compact).
  */
 export const CacheProgressCard: React.FC<CacheProgressCardProps> = ({
   hitRatePct = 0,
 }) => {
   const safeRate = Math.min(100, Math.max(0, hitRatePct || 0));
-  // Prompt caching typically yields 80-90% discount on cache read tokens
   const estimatedCostSavingsPct = Math.round(safeRate * 0.9);
 
   return (
-    <div className="fluent-card p-3 rounded-xl flex flex-col gap-2 relative overflow-hidden">
-      {/* Top Header: Title & Big Percentage */}
+    <div className="fluent-card px-2.5 py-1.5 rounded-xl flex flex-col justify-between shadow-xs select-none shrink-0">
+      {/* Top: Title & Rate & Savings Badge */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span>Prompt 缓存效率 (Cache Hit Rate)</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="p-0.5 rounded-md bg-indigo-500/10 text-indigo-600 border border-indigo-500/20">
+            <Sparkles className="w-3 h-3" />
+          </div>
+          <div className="flex items-center gap-1.5 truncate">
+            <span className="text-[11px] font-bold text-slate-800 truncate">
+              Prompt 缓存效率
+            </span>
+            {safeRate > 0 && (
+              <span className="px-1.5 py-0.2 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/80 text-[9.5px] font-bold shrink-0">
+                节省 {estimatedCostSavingsPct}% 成本
+              </span>
+            )}
+          </div>
         </div>
-        <span className="text-base font-bold text-amber-300 tabular-digits">
+
+        <span className="text-sm font-extrabold text-indigo-600 tabular-digits tracking-tight shrink-0 ml-1">
           {safeRate.toFixed(1)}%
         </span>
       </div>
 
-      {/* Dynamic Progress Bar */}
-      <div className="w-full h-2 rounded-full bg-slate-950/70 border border-white/[0.06] overflow-hidden p-0.5 relative">
+      {/* Progress Bar */}
+      <div className="w-full h-1.5 bg-slate-200/70 rounded-full overflow-hidden my-1 relative shadow-inner">
         <div
           style={{ width: `${safeRate}%` }}
-          className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-amber-400 to-emerald-400 transition-all duration-500 ease-out shadow-[0_0_8px_rgba(245,158,11,0.4)]"
+          className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-emerald-500 transition-all duration-500 ease-out"
         />
       </div>
 
-      {/* Bottom Metadata: Formula & Cost Savings */}
-      <div className="flex items-center justify-between text-[10px] pt-0.5">
-        <span className="text-slate-400">
-          公式：缓存请求 / 总输入 × 100%
-        </span>
-        {safeRate > 0 ? (
-          <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
-            节省 {estimatedCostSavingsPct}% 输入成本
-          </span>
-        ) : (
-          <span className="text-slate-500">
-            暂无缓存节省
-          </span>
-        )}
+      {/* Bottom Subtitle */}
+      <div className="flex items-center justify-between text-[9.5px] text-slate-400 font-medium">
+        <span>公式：缓存请求 / 总输入 × 100%</span>
+        <span>节省约 {estimatedCostSavingsPct}% 输入成本</span>
       </div>
     </div>
   );
