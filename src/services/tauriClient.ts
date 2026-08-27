@@ -599,15 +599,45 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       let logsSupported = false;
       let cacheSupported = req.provider === "new_api";
 
-      if (baseUrl && token) {
-        try {
-          const testPath = req.provider === "sub2_api"
-            ? `${baseUrl}/v1/sub2api/billing`
-            : `${baseUrl}/api/user/self`;
-          const res = await proxyFetch(testPath, token);
-          if (res.ok) balanceSupported = true;
-        } catch {
-          // ignore
+      if (baseUrl) {
+        if (req.provider === "sub2_api") {
+          const jwtToken = req.auth_token || (token?.startsWith("eyJ") ? token : undefined);
+          const apiKey = req.admin_token || (token?.startsWith("sk-") ? token : undefined);
+
+          if (jwtToken) {
+            try {
+              const res = await proxyFetch(`${baseUrl}/api/v1/user/profile`, jwtToken);
+              if (res.ok) balanceSupported = true;
+            } catch {
+              // ignore
+            }
+            try {
+              const res = await proxyFetch(`${baseUrl}/api/v1/usage?page=1&page_size=1`, jwtToken);
+              if (res.ok) logsSupported = true;
+            } catch {
+              // ignore
+            }
+          } else if (apiKey) {
+            try {
+              const res = await proxyFetch(`${baseUrl}/v1/sub2api/billing`, apiKey);
+              if (res.ok) balanceSupported = true;
+            } catch {
+              // ignore
+            }
+          }
+        } else if (token) {
+          try {
+            const res = await proxyFetch(`${baseUrl}/api/user/self`, token);
+            if (res.ok) balanceSupported = true;
+          } catch {
+            // ignore
+          }
+          try {
+            const res = await proxyFetch(`${baseUrl}/api/log/self?page_size=1&p=0`, token);
+            if (res.ok) logsSupported = true;
+          } catch {
+            // ignore
+          }
         }
       }
 

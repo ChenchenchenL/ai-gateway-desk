@@ -73,12 +73,10 @@ impl GatewayAdapter for Sub2ApiAdapter {
     async fn fetch_balance(&self) -> Result<BalanceInfo, AppError> {
         let token = self.token.clone();
         let endpoints = [
+            "/api/v1/user/profile",
             "/v1/sub2api/billing",
-            "/api/v1/auth/me",
-            "/api/v1/user",
             "/api/v1/subscriptions",
             "/api/v1/keys",
-            "/api/user/info",
             "/api/user/profile",
         ];
 
