@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isTauri } from "../services/tauriClient";
+import { isTauri, safeInvoke } from "../services/tauriClient";
 
 /**
  * Universal Drag Handler:
@@ -38,9 +38,11 @@ export function useWidgetDrag() {
     if (isTauri()) {
       try {
         const appWindow = getCurrentWindow();
-        appWindow.startDragging();
-      } catch (err) {
-        console.warn("Tauri native startDragging:", err);
+        appWindow.startDragging().catch(() => {
+          safeInvoke("drag_window").catch(() => {});
+        });
+      } catch {
+        safeInvoke("drag_window").catch(() => {});
       }
       return;
     }

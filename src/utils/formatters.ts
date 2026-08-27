@@ -21,6 +21,9 @@ export function formatCurrency(amount?: number | null, currency = "USD"): string
   if (typeof amount !== "number" || isNaN(amount)) {
     return "--";
   }
+  if (amount < 0 || amount >= 999999) {
+    return "无限额度";
+  }
   const currStr = String(currency || "USD").toUpperCase();
   const isCny = currStr === "CNY" || currStr === "¥" || currStr === "RMB";
   const symbol = isCny ? "¥" : "$";

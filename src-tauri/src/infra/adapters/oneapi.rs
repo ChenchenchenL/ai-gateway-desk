@@ -49,8 +49,41 @@ impl OneApiAdapter {
         }
     }
 
+    fn extract_num(v: &Value) -> Option<f64> {
+        v.as_f64()
+            .or_else(|| v.as_i64().map(|n| n as f64))
+            .or_else(|| v.as_u64().map(|n| n as f64))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+    }
+
     /// Extracts balance from various JSON responses.
     fn extract_balance(json: &Value) -> Option<f64> {
+        let target = json.get("data").unwrap_or(json);
+        let sub_obj = target.get("user").or_else(|| target.get("account"));
+
+        // 1. Direct candidate fields in target / json / user / account
+        let candidates = [
+            target.get("quota"),
+            target.get("remain_quota"),
+            target.get("balance"),
+            target.get("current_balance"),
+            target.get("total_quota"),
+            sub_obj.and_then(|u| u.get("quota")),
+            sub_obj.and_then(|u| u.get("balance")),
+            json.get("quota"),
+            json.get("remain_quota"),
+            json.get("balance"),
+        ];
+
+        for val in candidates.into_iter().flatten() {
+            if let Some(q) = Self::extract_num(val) {
+                if q > 0.0 {
+                    return Some(Self::convert_quota_to_balance(q));
+                }
+            }
+        }
+
+        // 2. Token lists
         let list = if let Some(arr) = json.as_array() {
             Some(arr)
         } else if let Some(arr) = json.get("data").and_then(|d| d.as_array()) {
@@ -65,50 +98,31 @@ impl OneApiAdapter {
 
         if let Some(items) = list {
             for item in items {
-                if let Some(true) = item.get("unlimited_quota").and_then(|v| v.as_bool()) {
-                    return Some(999999.0);
-                }
                 let item_quota = item.get("remain_quota")
                     .or_else(|| item.get("quota"))
                     .or_else(|| item.get("balance"))
-                    .and_then(|v| v.as_f64());
+                    .and_then(Self::extract_num);
                 if let Some(q) = item_quota {
-                    return Some(Self::convert_quota_to_balance(q));
+                    if q > 0.0 {
+                        return Some(Self::convert_quota_to_balance(q));
+                    }
                 }
-            }
-        }
-
-        let target = json.get("data").unwrap_or(json);
-        if let Some(true) = target.get("unlimited_quota").or_else(|| json.get("unlimited_quota")).and_then(|v| v.as_bool()) {
-            return Some(999999.0);
-        }
-
-        let candidates = [
-            target.get("remain_quota"),
-            target.get("quota"),
-            target.get("balance"),
-            target.get("current_balance"),
-            target.get("total_quota"),
-            json.get("remain_quota"),
-            json.get("quota"),
-            json.get("balance"),
-        ];
-
-        for val in candidates {
-            if let Some(q) = val.and_then(|v| v.as_f64()) {
-                return Some(Self::convert_quota_to_balance(q));
             }
         }
 
         let hard_limit = json.get("hard_limit_usd")
             .or_else(|| json.get("system_hard_limit_usd"))
             .or_else(|| json.get("total_available"))
-            .and_then(|v| v.as_f64());
+            .and_then(Self::extract_num);
 
         if let Some(limit) = hard_limit {
-            let total_usage = json.get("total_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let total_usage = json.get("total_usage").and_then(Self::extract_num).unwrap_or(0.0);
             let raw_balance = (limit - total_usage).max(0.0);
             return Some(Self::convert_quota_to_balance(raw_balance));
+        }
+
+        if let Some(true) = target.get("unlimited_quota").or_else(|| json.get("unlimited_quota")).and_then(|v| v.as_bool()) {
+            return Some(-1.0);
         }
 
         None

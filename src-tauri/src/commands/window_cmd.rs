@@ -33,3 +33,12 @@ pub async fn show_window(app: AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Initiates native OS dragging for the main window.
+#[command]
+pub async fn drag_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.start_dragging().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

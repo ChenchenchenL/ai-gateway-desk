@@ -47,6 +47,7 @@ pub fn run() {
             commands::set_always_on_top,
             commands::hide_to_tray,
             commands::show_window,
+            commands::drag_window,
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
