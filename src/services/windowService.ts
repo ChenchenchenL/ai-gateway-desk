@@ -15,4 +15,12 @@ export const windowService = {
   async showWindow(): Promise<void> {
     await safeInvoke<void>("show_window");
   },
+
+  async minimizeWindow(): Promise<void> {
+    await safeInvoke<void>("minimize_window");
+  },
+
+  async closeWindow(): Promise<void> {
+    await safeInvoke<void>("close_window");
+  },
 };

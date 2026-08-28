@@ -404,23 +404,30 @@ async function proxyFetch(targetUrl: string, token: string): Promise<{ ok: boole
     headers["Authorization"] = `Bearer ${pureToken}`;
   }
 
-  // 1. Prefer the WebView browser request. Some gateways expose balance and
-  // usage endpoints only to browser clients and reject the native client.
+  // 1. In the packaged app, use the same frontend request flow as the web
+  // preview's Vite curl proxy. This preserves redirects, TLS handling, and
+  // response bytes before any browser-origin restrictions are involved.
   if (isTauri()) {
     try {
-      const browserResponse = await fetch(targetUrl, { headers, mode: "cors" });
-      if (browserResponse.ok) return browserResponse;
+      const proxyResult = await invoke<{ status: number; body: string }>("proxy_http_get", {
+        url: targetUrl,
+        headers,
+      });
+      const status = Number(proxyResult.status);
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => JSON.parse(proxyResult.body),
+      };
     } catch {
-      // Fall through to the native proxy when the gateway does not allow CORS.
+      // Fall through to a direct WebView request if the proxy is unavailable.
     }
 
-    // 2. Fall back to the Rust proxy for gateways without CORS support.
+    // 2. Direct WebView fallback for gateways that require a browser origin.
     try {
-      const text = await invoke<string>("proxy_http_get", { url: targetUrl, headers });
-      const parsed = JSON.parse(text);
-      return { ok: true, status: 200, json: async () => parsed };
+      return await fetch(targetUrl, { headers, mode: "cors" });
     } catch (e) {
-      console.warn("[AI Gateway Desk] Browser and Tauri proxy requests failed:", e);
+      console.warn("[AI Gateway Desk] Tauri proxy and browser requests failed:", e);
     }
   }
 
@@ -655,7 +662,14 @@ async function fetchRealSiteDataInBrowser(site: Site, authToken: string, adminTo
  */
 export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   // Native window & platform controls pass through directly to Tauri runtime
-  const nativeWindowCommands = ["drag_window", "set_always_on_top", "hide_to_tray", "show_window"];
+  const nativeWindowCommands = [
+    "drag_window",
+    "set_always_on_top",
+    "hide_to_tray",
+    "show_window",
+    "minimize_window",
+    "close_window",
+  ];
   if (isTauri() && nativeWindowCommands.includes(cmd)) {
     try {
       return await invoke<T>(cmd, args);

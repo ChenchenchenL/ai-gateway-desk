@@ -47,6 +47,8 @@ pub fn run() {
             commands::set_always_on_top,
             commands::hide_to_tray,
             commands::show_window,
+            commands::minimize_window,
+            commands::close_window,
             commands::drag_window,
             commands::proxy_http_get,
         ])

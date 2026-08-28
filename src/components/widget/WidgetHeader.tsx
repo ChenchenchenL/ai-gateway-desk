@@ -13,7 +13,10 @@ import {
   Radio,
   Edit2,
   Trash2,
+  Minus,
+  X,
 } from "lucide-react";
+import { windowService } from "../../services/windowService";
 
 interface WidgetHeaderProps {
   currentSite: Site | null;
@@ -235,6 +238,24 @@ export const WidgetHeader: React.FC<WidgetHeaderProps> = ({
           className="p-1.5 rounded-lg hover:text-indigo-600 hover:bg-white/60 transition cursor-pointer"
         >
           <Settings className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => windowService.minimizeWindow()}
+          title="最小化窗口"
+          className="p-1.5 rounded-lg hover:text-indigo-600 hover:bg-white/60 transition cursor-pointer"
+        >
+          <Minus className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => windowService.closeWindow()}
+          title="关闭窗口"
+          className="p-1.5 rounded-lg hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+        >
+          <X className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>
